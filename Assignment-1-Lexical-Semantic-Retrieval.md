@@ -97,28 +97,38 @@ A local git repo is initialised here; `.gitignore` excludes `data/`, `*.zip`, ch
 
 ## Raw data — status
 
-Downloading to `data/raw/` (gitignored). EB-NeRD comes straight from S3, no auth:
+In `data/raw/` (gitignored). All present files pass `unzip -t`. **Nothing is extracted yet** —
+extraction is a Q1 pipeline step.
 
 | File | Size | Status |
 |---|---|---|
-| `ebnerd_demo.zip` | 21 MB | ⏳ downloading |
-| `ebnerd_small.zip` | 84 MB | ⏳ queued |
-| `Ekstra_Bladet_word2vec.zip` | 140 MB | ⏳ queued |
-| `google_bert_base_multilingual_cased.zip` | 361 MB | ⏳ queued |
-| `MINDsmall_train.zip` | — | ❌ **blocked — needs your HF login** |
-| `MINDsmall_dev.zip` | — | ❌ **blocked — needs your HF login** |
+| `ebnerd/ebnerd_demo.zip` | 20.5 MB | ✅ smoke-test tier |
+| `ebnerd/ebnerd_small.zip` | 80.2 MB | ✅ **headline tier** |
+| `mind/MINDsmall_train.zip` | 50.5 MB | ✅ **headline tier** |
+| `mind/MINDsmall_dev.zip` | 29.5 MB | ✅ headline tier |
+| `mind/MINDlarge_train.zip` | 505.6 MB | ✅ Q6 scale story only |
+| `mind/MINDlarge_dev.zip` | 98.7 MB | ✅ Q6 scale story only |
+| `mind/MINDlarge_test.zip` | 576.6 MB | ✅ unlabelled — Q5 leaderboard only |
+| `ebnerd_testset.zip` | 1.5 GB | ⏳ **needed for Q5** — see below |
+| `ebnerd_large.zip` | 3.0 GB | ⏳ downloading — optional, Q6 only |
+| one embeddings artifact | ~344 MB | ⏳ baseline row only — see architecture decision 4 |
 
-> [!warning] MIND needs authentication — action required
-> The HF repo `yjw1029/MIND` is **gated** (`"gated": "auto"`), and the original Microsoft Azure
-> mirror (`mind201910small.blob.core.windows.net`) is **permanently offline** (HTTP 409). No HF token
-> exists on this machine.
+MIND totals 1.3 GB zipped → ~3.4 GB extracted.
+
+> [!warning] EB-NeRD has no test split until `ebnerd_testset.zip` lands
+> Both `ebnerd_demo` and `ebnerd_small` ship **`train/` and `validation/` only**. The EB-NeRD
+> Codabench submission (Q5, mandatory) needs `ebnerd_testset.zip`:
+> `https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/ebnerd_testset.zip`
+> Q1–Q4 are unaffected. Get it before ~24 Aug.
+
+> [!info] Artifact URLs need the `artifacts/` prefix
+> The embedding zips are **not** at the bucket root — a bare
+> `wget .../Ekstra_Bladet_word2vec.zip` returns 404 (this is why the earlier queued downloads
+> silently failed). The correct form is
+> `https://ebnerd-dataset.s3.eu-west-1.amazonaws.com/artifacts/<name>.zip`, e.g.
+> `artifacts/google_bert_base_multilingual_cased.zip` (344.5 MB).
 >
-> To unblock: accept the terms at <https://huggingface.co/datasets/yjw1029/MIND>, then run
-> `! hf auth login` (paste a token from <https://huggingface.co/settings/tokens>). After that the two
-> `wget` URLs in the brief work, or use `hf download yjw1029/MIND --repo-type dataset`.
->
-> **Not urgent for Q1** — start the pipeline on EB-NeRD demo. But MIND is required for the
-> unified-schema work and one of the two mandatory leaderboards, so clear it this week.
+> Only **one** is needed, as the baseline row against our own computed embeddings.
 
 ---
 [[_syllabus|IRE course plan]] · [[Claude-Code-Toolkit/README|Claude Code Toolkit]] · [[Dashboard]]

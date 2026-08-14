@@ -98,7 +98,7 @@ by click likelihood. You have three signal families and must exercise all three:
 | Axis | Signal | Brief names | This assignment (C1) |
 |---|---|---|---|
 | **Lexical** | word overlap | BM25, **TF-IDF** | BM25 over title + abstract (Q2.1); TF-IDF as cheap baseline |
-| **Semantic** | meaning | **Word2Vec, BERT, XLM-RoBERTa** | Provided multilingual embeddings + ANN |
+| **Semantic** | meaning | **Word2Vec, BERT, XLM-RoBERTa** | Own multilingual embeddings + ANN; EB-NeRD's provided vectors as baseline — see decision 4 |
 | **Behavioural** | prior behaviour | click history, recency/decay, **session context** | Click history + recency; **session context — see open decisions** |
 
 > [!note] Two narrowings worth naming in the design note
@@ -125,7 +125,7 @@ The brief's real floor is smaller than it looks. Three tiers, and you should kno
 |---|---|---|---|
 | **Data** | One script, one dataset schema, temporal split | + feature store as parquet, config-driven paths | Airflow/DVC orchestration, a database |
 | **Lexical** | `rank_bm25` over titles, default params | + abstracts, own inverted index, k1/b sweep | Custom posting-list compression, learned sparse (SPLADE) |
-| **Semantic** | Provided embeddings + brute-force top-K | + FAISS HNSW, one own-embedding ablation | Training an encoder, distillation, multi-vector (ColBERT) |
+| **Semantic** | Provided embeddings + brute-force top-K | + FAISS HNSW, own embeddings for both datasets | *Fine-tuning or training* an encoder, distillation, multi-vector (ColBERT) |
 | **Eval** | AUC/MRR/nDCG + recall@K + one slice + bootstrap | + beyond-accuracy, several slices, leakage test | A metrics DSL, experiment-tracking server |
 | **Effort** | ~2 days | ~1 week | Weeks; eats the marks it was meant to earn |
 
@@ -192,7 +192,7 @@ choices into the ≤4-page design note. Not an afterthought: the note is where m
 ```mermaid
 flowchart TD
     subgraph Q1["Q1 · Reproducible pipeline — ONE COMMAND"]
-        RAW["raw/<br>MINDsmall_*.zip<br>ebnerd_demo.zip"]
+        RAW["raw/<br>MINDsmall + MINDlarge zips<br>ebnerd_demo + ebnerd_small zips"]
         BUILD["build_pipeline.py<br>download → clean → temporal split"]
         RAW --> BUILD
     end
@@ -262,10 +262,12 @@ considered"* and *"ablation rigour"* — so additions are rewarded, **as long as
 
 - **A learned re-ranker.** Tempting, but that's explicitly Component-2. Building it now means less
   time on the reproducibility and evaluation work that *this* component is graded on.
-- **Training your own embedding model from scratch.** Enormous compute, marginal insight over
-  fine-tuning or using provided embeddings.
-- **The full-size datasets.** EB-NeRD large is 600M+ impressions. Free-tier GPU won't survive it, and
-  the assignment explicitly sanctions demo/small.
+- **Training or fine-tuning an embedding model.** Enormous compute, marginal insight. Note this is
+  *not* the same as **running** a pre-trained encoder over the corpus — see the encoding-vs-training
+  distinction under Embeddings below. Encoding is cheap and is what Q3 sanctions.
+- **Full-scale runs as your headline numbers.** EB-NeRD large is 600M+ impressions; the assignment
+  explicitly sanctions demo/small, and Q1.1 names "MIND-small and EB-NeRD demo/small". Large is
+  downloaded here and reserved for *one* scale-story measurement (Q6), not for the main results.
 - **A serving API / web UI.** Zero marks. Not in the rubric.
 
 > [!tip] The rule of thumb
@@ -280,7 +282,8 @@ considered"* and *"ablation rigour"* — so additions are rewarded, **as long as
 ├── README.md                # one-command reproduce (graded)
 ├── configs/
 │   ├── mind.yaml
-│   └── ebnerd.yaml          # dataset-specific paths, params, seeds
+│   ├── ebnerd.yaml          # dataset-specific paths, params, seeds
+│   └── resources.yaml       # n_jobs / mem_gb / batch_size — CLI-overridable (see decision 7b)
 ├── src/
 │   ├── data/
 │   │   ├── download.py
@@ -420,6 +423,14 @@ is a cheap credibility win.
 > **Why the Danish thing matters:** a model that only learned English doesn't gently underperform on
 > Danish — it produces coordinates that are essentially arbitrary. Your EB-NeRD numbers would be noise
 > wearing the costume of results.
+
+> [!important] "Compute your own embeddings" does not mean training anything
+> Q3 says *"using the provided article embeddings (or compute your own using BERT/XLM-RoBERTa)"*, and
+> Q3.1 says *"compute or load"*. Computing your own = **one forward pass of an already-trained encoder
+> over the corpus**. No gradients, no training loop, no labels — ~120K short texts, a matter of
+> minutes on any modern GPU. That is completely different from *training* or *fine-tuning* an encoder,
+> which the tiers table above rightly calls overkill. Don't let the word "compute" scare you toward
+> the provided vectors; the cost is a coffee break, not a weekend.
 
 | Model | Dim | Multilingual | Notes for this assignment |
 |---|---|---|---|
@@ -687,12 +698,29 @@ is Component-2. So:
 - Optimise for **recall**, not precision. A K that seems absurdly large is correct here.
 - Resist building a ranker now — but design the interface so C-2 can slot one in.
 
-### 4. Embeddings: provided vs. computed
-- **Provided** (EB-NeRD ships Word2Vec + multilingual BERT): fast, no GPU time, reproducible.
-- **Your own** (BERT/XLM-RoBERTa): more control, defensible in a viva, costs GPU hours you may not have.
+### 4. Embeddings: provided vs. computed — **decided: compute your own, keep one provided as baseline**
+
+- **Provided** (EB-NeRD ships Word2Vec, mBERT, XLM-R, contrastive vectors): fast, no GPU time, and the
+  contrastive ones are *click-trained*, so they're a strong reference.
+- **Your own** (mBERT/XLM-R forward pass): a coffee break on a local GPU, not a weekend — see the
+  encoding-vs-training callout in Part C.
 - **EB-NeRD is Danish** — an English-only model will silently underperform. Multilingual or Danish-specific.
-- **Compromise:** use provided embeddings for the main result, compute your own for *one* ablation.
-  That gets you the comparison without the compute bill.
+
+> [!important] The deciding argument is Q1's unified schema, not compute cost
+> **The provided embeddings are EB-NeRD-only — MIND ships no equivalent.** So "load for EB-NeRD,
+> compute for MIND" means your two datasets are encoded by *different models*, and Q3.5 ("compare
+> lexical vs. semantic — on which slices?") plus every cross-dataset claim becomes uninterpretable.
+> You would be measuring the encoder difference, not the dataset difference. Computing **both** with
+> one multilingual encoder is the only clean basis for comparison.
+
+**Ship:** own embeddings from a single multilingual encoder over both corpora — the headline
+semantic result.
+**Baseline row:** EB-NeRD's provided vectors, on EB-NeRD only, as a correctness check and an
+ablation. They are click-trained and *should* beat generic mBERT; **if your own vectors win, suspect
+a bug** (pooling, truncation, normalisation) rather than celebrating.
+
+This also strengthens the Q6 scale analysis: having actually run the encoder, you can report real
+throughput and memory for the embedding stage instead of speculating about it.
 
 ### 5. ANN index vs. brute force
 - MIND-small / EB-NeRD demo are small enough for **brute force** — and brute force is *exact*, so it
@@ -709,15 +737,70 @@ several distinct interests into one meaningless centroid.
   alternative even if you ship the mean.
 
 ### 7. Scale — pick your bundle deliberately
-Demo → small → large lets you "dial scale gradually". Free-tier GPU means you'll likely live on
-**MIND-small + EB-NeRD demo**. That's fine and expected — but Q6 asks *where it breaks at 10×*, so
-you need to have thought about:
+
+Demo → small → large lets you "dial scale gradually". **All four tiers are downloaded** (EB-NeRD
+demo + small, MIND small + large), so the choice is about where to spend time, not what's available.
+
+| Tier | Role | Use for |
+|---|---|---|
+| **EB-NeRD demo** (5K users) | smoke test | Does the pipeline run end to end? Every code change. |
+| **EB-NeRD small + MIND small** | **headline pair** | Every reported metric. Comparable size, both feasible locally. |
+| **MIND large** | scale story only | *One* Q6 measurement. Never the main results. |
+
+The headline pair is the important line: your cross-dataset claims are only meaningful if both sides
+are the same tier.
+
+> [!warning] EB-NeRD small and demo have **no test split**
+> Both ship `train/` and `validation/` only. Test impressions exist solely in `ebnerd_testset.zip`
+> (1.5 GB, not yet downloaded) — which is what Q5's mandatory EB-NeRD leaderboard submission needs.
+> Q1–Q4 are unaffected; plan the download before ~24 Aug.
+
+Q6 asks *where it breaks at 10×*, so you still need to have thought about:
 
 - Inverted index memory growth; when does it stop fitting in RAM?
 - ANN build time vs. query time as vectors grow.
 - Where the pipeline becomes I/O-bound rather than compute-bound.
 
-Measure at two scales (demo and small) and **extrapolate** — that's a legitimate scale analysis.
+Measure at two scales (demo and small) and **extrapolate** — that's a legitimate scale analysis. With
+MIND-large downloaded you can optionally anchor the extrapolation with one real large-tier data point,
+which is stronger than pure projection.
+
+### 7b. Compute budget — local hardware, and why it's parameterised
+
+Measured on this machine: **i9-14900HX (24 cores / 32 threads), 31 GB RAM, RTX 4060 Laptop 8 GB
+VRAM, torch 2.5.1 + CUDA**, 134 GB free disk.
+
+**This is enough for all of C1 — Colab/Kaggle are not needed.** It beats free Colab on CPU and RAM;
+the only place it loses is VRAM (8 GB vs a T4's 16 GB), which matters for exactly one step:
+
+| Stage | Bound by | Local verdict |
+|---|---|---|
+| Data pipeline, temporal split | RAM + disk I/O | Comfortable |
+| BM25 / inverted index | CPU cores | Strong — far more cores than any free tier |
+| **Embedding forward pass** | **VRAM** | Fine at batch 32–64 in fp16; slower than a T4, still minutes |
+| ANN (brute force at ~120K × 768) | RAM | ~300 MB of vectors — trivial |
+| Eval + bootstrap CIs | CPU cores | Embarrassingly parallel; scales with cores |
+
+Reach for **Kaggle** (30 GB RAM, 12-hour sessions, no idle disconnect — better than free Colab) only
+if a MIND-large embedding run proves too slow locally. If you do, pull the data there from source
+rather than uploading — local upload throughput was measured at ~19 KB/s.
+
+> [!important] Never hardcode core or memory limits — take them as arguments
+> The machine is shared with other work. A run that grabs all 32 cores or all 31 GB will thrash
+> (observed: load average 26.5 and 9.5 GB of swap already in use while another job was running).
+> Every stage that parallelises or allocates in bulk must accept a budget:
+>
+> - `--n-jobs` / `n_jobs` in config — worker processes. **Cap, don't default to `os.cpu_count()`.**
+> - `--mem-gb` — memory ceiling, used to size batches and chunked reads rather than loading whole
+>   parquet files.
+> - `--batch-size` — embedding batch, the VRAM dial, separate from host memory.
+>
+> **Working default: 26 cores / 26 GB** — a sensible ceiling *on an idle machine*, leaving headroom
+> for the OS and editor. Both must be overridable per run, from CLI and from `configs/*.yaml`, and
+> the resolved values logged with every result so a number can be tied to the budget that produced it.
+>
+> **Check availability before trusting the ceiling.** 26 GB is unusable when only 8 GB is free; a run
+> should read actual availability at startup and either scale down or refuse, not swap itself to death.
 
 ### 8. Beyond-accuracy metrics pull against accuracy
 Diversity, novelty, and coverage genuinely trade off against nDCG. Recommending the same popular
@@ -802,6 +885,8 @@ is compliant, not a shortcut.
 | Recency-weighted mean as ship default | Plain mean (brief's suggestion) | News decay; plain mean is the ablation |
 | RRF for fusion | Weighted score sum | Avoids BM25 score-normalisation fragility |
 | `Makefile` targets | Shell scripts, `just` | Q1.5 says "e.g. `make data`" — an example, not a mandate |
+| Own embeddings as headline, provided as baseline | Provided as headline | MIND ships no provided vectors; one encoder over both is the only comparable basis (decision 4) |
+| Resource budget as CLI/config args | Hardcoded `os.cpu_count()` | Shared machine; caps must be tunable per run and logged with results (decision 7b) |
 
 ### Open — you must decide, and the brief won't tell you
 

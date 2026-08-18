@@ -240,6 +240,22 @@ survive a parquet round-trip natively and require bespoke encoding in every othe
 holding MIND's 92 MB `behaviors.tsv` plus expanded history columns is several GB; polars' lazy scan
 keeps it far lower, which is what makes `--mem-gb 26` a real constraint rather than a hope.
 
+> [!info] Resolved 2026-08-18 — installed and measured, with a scope correction
+> **The brief mandates no dataframe library.** The only libraries it names anywhere are FAISS/ScaNN
+> for ANN (Q3.2, which also permits brute force) and BM25/TF-IDF as *algorithms*. So this was a free
+> choice, decided on merit.
+>
+> Polars 1.43.2 is installed in `.venv` and verified on real data: 24,724 EB-NeRD rows read in
+> **0.01 s**, `List(Int32)` preserved natively, and an `explode → group_by` — the exact operation the
+> feature store needs — in **7 ms**. That list-column handling is the concrete advantage over pandas,
+> which stores them as Python objects.
+>
+> **Scope correction:** the readers (`src/data/readers.py`) do **not** use polars. They stream records
+> through stdlib `csv` and `pyarrow`, because a reader that yields one record at a time never needs a
+> dataframe. Polars enters at the **aggregation and feature-store** stage, and becomes decisive at the
+> large tier (F15: 12M impressions against 2.3 GB of history). Keeping it out of the reader interface
+> means the dataframe choice can still change without touching a caller.
+
 ### D6 — One-command rebuild: `make` or a Python entrypoint?
 
 | Option | Buys | Costs |

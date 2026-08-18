@@ -88,3 +88,77 @@ real verification loop is the point, not a transcript.
 ### 2026-08-15 00:41 · `e71a9c7f`
 
 > data directory is not git ed and no files so far added ri8? check and add git if not. after reading, will proceed to code.
+
+### 2026-08-15 00:53 · `e71a9c7f`
+
+> yes thats mine, will finish soon. continue with the doc edits. for now lets plan this. make the core and gb as parseable args.
+
+### 2026-08-15 00:58 · `e71a9c7f`
+
+> lets use small for our prelim works
+
+### 2026-08-15 19:55 · `e71a9c7f`
+
+> on a side note, is it okay, if i use one terminal of claude for downloading and another for a different stage?
+
+### 2026-08-18 15:00 · `e71a9c7f`
+
+> list the requirements of the assignment in points, simple to understand
+
+### 2026-08-18 15:12 · `e71a9c7f`
+
+> we have the raw files ri8? check the status of the files. like if intact or any error, without unzipping? lets create a doc log for all these tasks, considerations, updates, things done, not done, why and etc. check the Q1.1 status. then for clean and parse, whats required? for temportal split, 80,10,10. generate the plan doc like in '/home/noel/Desktop/Obsidian/MTech_CSE/SEM3/Subjects/LMA/Projects/Individual-Small-LM/plan', one overall, and one for each phase. and once done, we can proceed.
+
+### 2026-08-18 15:13 · `e71a9c7f`
+
+> for now consider all phases, but go in depth till Q4. also in docs, for each design choice, provide alternatives and explain why and why not, features of each choice.
+
+### 2026-08-18 15:17 · `e71a9c7f`
+
+> use the small data set for now, instead of large. prep the models and stuff for this and then we can use the larger dataset
+
+### 2026-08-18 15:28 · `e71a9c7f`
+
+> check the large data sets in both.
+
+### 2026-08-18 15:40 · `e71a9c7f`
+
+> add those findings to the log.
+
+### 2026-08-18 15:44 · `e71a9c7f`
+
+> start phase 1, extract and readers
+
+### 2026-08-18 16:29 · `e71a9c7f`
+
+> should i install polar system wide? is pandas system wide or in our env?
+
+### 2026-08-18 16:32 · `e71a9c7f`
+
+> can i install polar in system wide and then import in venv?
+
+### 2026-08-18 16:33 · `e71a9c7f`
+
+> yes go ahead with all three steps
+
+### 2026-08-18 16:42 · `e71a9c7f`
+
+> then install in system and in venv
+
+### 2026-08-18 16:42 · `e71a9c7f`
+
+> no need just venv
+
+### 2026-08-18 16:58 · `e71a9c7f`
+
+> <task-notification>
+> <task-id>bkylk2m85</task-id>
+> <tool-use-id>toolu_01EbWg259J82bvxX3uqnTFPk</tool-use-id>
+> <output-file>/tmp/claude-1000/-home-noel-Desktop-Obsidian-MTech-CSE-SEM3-Subjects-IRE/e71a9c7f-e274-41b2-9bdd-39440e305c8e/tasks/bkylk2m85.output</output-file>
+> <status>completed</status>
+> <summary>Background command "Install polars into venv" completed (exit code 0)</summary>
+> </task-notification>
+
+### 2026-08-18 17:05 · `e71a9c7f`
+
+> continue

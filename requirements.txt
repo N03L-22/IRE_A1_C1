@@ -1,0 +1,34 @@
+# A1 Component-1 -- pinned environment (Q7: the grader must be able to rebuild).
+#
+# Setup:
+#     python3 -m venv --system-site-packages .venv
+#     .venv/bin/pip install -r requirements.txt
+#
+# --system-site-packages is deliberate: torch is a ~2.5 GB install already
+# present on the dev machine, and duplicating it into the venv buys nothing.
+# A plain `python3 -m venv` also works -- pip will then fetch torch too.
+#
+# Versions below are what is actually installed and tested, not aspirational.
+# Phase 2/3 dependencies are listed unpinned because they are not installed
+# yet; pin them once they are, so this file never claims an untested version.
+
+# --- Phase 1: data pipeline (installed, tested) ---
+polars==1.43.2          # dataframe layer; native list dtypes, multithreaded
+pyarrow==24.0.0         # parquet I/O (EB-NeRD's native format)
+numpy==1.26.4
+
+# --- Phase 4: evaluation (installed) ---
+scipy==1.11.4           # AUC and statistics
+scikit-learn==1.8.0     # TF-IDF baseline, cosine utilities
+
+# --- Tooling (installed) ---
+pytest==9.0.3
+psutil==5.9.8           # resource-budget resolution
+
+# --- Phase 2/3: not yet installed, pin when they are ---
+# bm25s                 # fast BM25 with a persistable index
+# sentence-transformers # multilingual encoder (Phase 3 D2)
+
+# GPU encoder: torch 2.5.1+cu121 is inherited from user-site on the dev
+# machine. Uncomment if the venv is built without --system-site-packages.
+# torch==2.5.1

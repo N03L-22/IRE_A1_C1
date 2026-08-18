@@ -151,9 +151,36 @@ test split honest — say so in the note.
 
 | Baseline | Cost | Why it earns its place |
 |---|---|---|
-| **Popularity** (top-K most-clicked in train) | ~20 lines | The floor. If BM25 cannot beat "show everyone the same popular articles", something is wrong. **Also the single most informative number in the report.** |
+| **Recency** (K most recently published before *t*) | ~15 lines | **The strongest baseline measured, by a wide margin — recall@50 = 0.92 (F16).** This is the number BM25 has to beat. |
+| **Popularity** (top-K most-clicked in train) | ~20 lines | The classic floor, and it turns out to be a weak one here (recall@50 = 0.03) |
 | **TF-IDF** (`sklearn.TfidfVectorizer` + cosine) | ~1 hour | Isolates what BM25's two knobs actually buy over plain TF-IDF |
 | Random | ~5 lines | True chance floor; makes recall@200 interpretable |
+
+> [!warning] Recency changes what this phase is for — measured, not predicted (F16)
+> A walking-skeleton run on EB-NeRD demo found that **94.3% of clicks are on articles under 24 hours
+> old**, while only **1.1% of the corpus** is that fresh. Consequences, measured:
+>
+> | Retriever | recall@50 |
+> |---|---|
+> | Recency only (user ignored) | **0.9250** |
+> | Token overlap, full corpus | 0.0000 |
+> | Token overlap, 24h window | **0.2750** |
+> | Hashed vectors, 24h window | 0.4750 |
+>
+> Full-corpus lexical retrieval is close to hopeless here: the user's history is mostly *older*
+> articles, so the most textually similar documents are stale ones. **The same scoring function
+> inside a 24-hour window goes from 0.00 to 0.28.**
+>
+> **So BM25 must operate within a recency-constrained pool, not over the whole corpus.** The
+> `at_time` argument in the `Retriever` protocol — added defensively — is now load-bearing.
+> Report both regimes; the gap between them is a genuine finding, not a tuning detail.
+>
+> **This is legitimate, not a leak.** `published_time` is known at serving time. Ranking by *future*
+> engagement would be a leak; filtering by publish date is not.
+>
+> **MIND has no `published_time`.** The filter cannot be built there from article metadata —
+> first-seen-in-impressions is the available proxy, and it needs its own decision. The asymmetry is
+> worth reporting.
 
 All three go through the same `Retriever` interface and the same harness. "BM25 recall@100 = 0.42" is
 a number; "0.42 vs TF-IDF 0.36 vs popularity 0.19 vs random 0.01" is a finding.

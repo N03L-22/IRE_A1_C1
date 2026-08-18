@@ -154,6 +154,58 @@ behaviors, because mean history is 160 clicks/user across 788K users.
 loaded. Say "the join, not the model" in the note — it is a more specific and more defensible answer
 than "it gets slower". → [[5-Submission-and-Note]] Q6.
 
+### F16 — Recency dominates everything: a recency-only baseline gets recall@50 = 0.92
+Measured on EB-NeRD demo, 500 evaluated impressions, via the walking skeleton.
+
+| Baseline | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| **Recency only** (K most recently published, user ignored) | **0.9160** | 0.9420 | 0.9580 |
+| Popularity (train clicks) | 0.0500 | 0.0500 | 0.0833 |
+| Token overlap (lexical stand-in) | 0.0000 | 0.0000 | 0.0000 |
+| Hashed bag-of-words (semantic stand-in) | 0.0000 | 0.0000 | 0.0167 |
+
+The cause: **94.3% of clicks are on articles less than 24 hours old** (96.0% within 48h), while
+only **1.1% of the corpus (125 of 11,777 articles)** was published in any given prior-24h window.
+Median clicked-article age at impression time is **0.1 days**.
+
+*Consequence — this reshapes Phases 2 and 3.* Candidate generation on this dataset is
+**primarily a recency-filtering problem and only secondarily a text-matching one**. Retrieving from
+the full corpus by text similarity is close to hopeless, because the target is one of ~125 fresh
+articles hiding among ~11,650 stale ones that are *more* textually similar to the user's history
+(the history is itself mostly older articles).
+
+**What this does not mean:** that BM25 and embeddings are useless. It means they must be applied
+**within** a recency-constrained candidate pool, not against the whole corpus. The interesting
+question shifts from *"lexical or semantic?"* to *"given the ~125 fresh articles, which does the
+user pick?"* — which is exactly the question a re-ranker answers, and it is a strong Q3.5 finding.
+
+**Actions:**
+1. Add a **recency-only retriever** as a first-class baseline in Phase 2 D6 — it is currently the
+   strongest thing measured and every real retriever must beat it.
+2. Add a **publish-time window** to the `Retriever` contract. The `at_time` argument already exists
+   in the protocol for exactly this; it is now load-bearing rather than defensive.
+3. Report both regimes: full-corpus retrieval **and** recency-windowed retrieval. The gap between
+   them is a genuine design-note finding, not a tuning detail.
+4. **MIND has no `published_time` (F1/D3)**, so this filter cannot be built there from article
+   metadata. First-seen-in-impressions time is the available proxy — needs its own decision, and
+   the cross-dataset asymmetry is worth reporting.
+
+> [!warning] Do not let this become an accidental leak
+> "Most recently published before *t*" is legitimate — publish time is known at serving time. But
+> *"most clicked in the next hour"* is not. The recency baseline must filter on `published_time < t`
+> only, never on future engagement. → [[4-Evaluation-Harness]] D6.
+
+### F17 — Corpus truncation is a measurement artefact, caught by the skeleton
+The skeleton's first run capped the corpus at "first 5,000 articles by id" and returned recall 0.0000
+everywhere. Cause: **372 of 379 clicked articles fell outside the kept slice**, so recall was
+structurally capped near zero for a reason unrelated to any retriever.
+
+*Consequence:* any corpus subsetting must **keep every article referenced by an evaluated
+impression** and pad with distractors, never truncate arbitrarily. Fixed in `src/skeleton.py`. This
+is the same argument [[1-Data-Pipeline]] D3 makes for taking the *union* of MIND's two `news.tsv`
+files — and it is now demonstrated rather than argued. Worth one line in the design note as a
+methodology point: a recall ceiling imposed by the harness is invisible in the output.
+
 ## Decisions taken
 
 | # | Decision | Rationale | Where |

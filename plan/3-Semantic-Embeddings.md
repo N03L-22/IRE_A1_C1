@@ -43,6 +43,12 @@ Scored by the same harness ([[4-Evaluation-Harness]]). Architecture context in [
 | **Own only** | One encoder over both corpora → the comparison measures the *dataset*, not the encoder; real throughput numbers for Q6 | A forward pass (minutes) and a model download |
 | **Own + provided baseline** ✅ | Everything above, plus a reference that catches bugs | One extra ablation row |
 
+> [!tip] The provided baseline is cheaper than expected — [[execution_plan_log|F13]]
+> Both artifacts cover **all 125,541 EB-NeRD articles**, and the small tier's 20,738 are a strict
+> subset with **zero missing ids**. So the baseline is a plain join on `article_id` — no subsetting,
+> no coverage gap, and it keeps working unchanged at the large tier.
+> `Ekstra_Bladet_word2vec` is 300-dim; `google_bert_base_multilingual_cased` is 768-dim.
+
 > [!important] The deciding argument is comparability, not compute cost
 > If EB-NeRD uses provided vectors and MIND uses ours, every cross-dataset statement conflates two
 > variables. Q3.5 and Q6 both ask for cross-dataset observations, so the encoder must be held constant.

@@ -24,7 +24,11 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | GitHub Classroom repo | ❌ not accepted yet |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F12.
+> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F15.
+>
+> **Large tiers measured (F13–F15) but still deliberately idle.** The headline numbers stay on small;
+> what the measurement bought is a concrete Q6 scale answer and a cheaper baseline, not a change of
+> scope.
 
 ## Findings
 
@@ -96,6 +100,60 @@ loses only on VRAM, which affects one step (the encoder forward pass, fine at ba
 *Caveat:* the machine is shared — observed load average 26.5 with 9.5 GB swap in use while another job
 ran. Hence resource limits as arguments, not constants. → [[Pipeline]], [[../architecture|arch]] 7b.
 
+### F13 — The provided embedding artifacts cover the **full** corpus, and small is a strict subset
+Both artifacts hold vectors for **125,541 articles** — the entire large corpus, not a small-tier
+subset. Verified: `small (20,738) ⊆ large (125,541) ⊆ artifacts (125,541)`, **zero missing ids**.
+
+| Artifact | Dim | Rows |
+|---|---|---|
+| `Ekstra_Bladet_word2vec` | 300 | 125,541 |
+| `google_bert_base_multilingual_cased` | 768 | 125,541 |
+
+*Consequence:* the provided-vectors baseline is a plain join on `article_id` — **no subsetting logic,
+no coverage gap, and it keeps working unchanged if we later move to the large tier**. Cheaper than
+[[3-Semantic-Embeddings]] D1 assumed. **The decision itself does not change**: own embeddings stay
+primary, because MIND ships no equivalent and mixing encoders across datasets makes Q3.5
+uninterpretable. Only the cost of the baseline row went down.
+
+### F14 — MIND-large test is unlabelled and covers a *later* 7-day week
+`MINDlarge_test/behaviors.tsv` col 5 contains **bare article ids with no `-1`/`-0` suffixes** —
+confirmed over 20,000 sampled rows, zero labelled. It spans **16–22 Nov 2019**, a clean 7-day period
+*after* dev (15 Nov).
+
+| | train | dev | test |
+|---|---|---|---|
+| Impressions | 2,232,748 | 376,471 | 2,370,727 |
+| Users | 711,222 | 255,990 | 702,005 |
+| Articles | 101,527 | 72,023 | **120,961** |
+| Labels | ✅ | ✅ | ❌ |
+
+*Consequence:* test is leaderboard-only and can never contribute to an offline metric — it has no
+ground truth. Its `news.tsv` carries **19% more articles than train**, so submission-time inference
+faces a genuine cold-article population that no training data ever saw. Worth a design-note sentence,
+and it is the strongest argument for keeping a content-based (rather than purely popularity-based)
+retriever in the submission path. → [[5-Submission-and-Note]].
+
+### F15 — Large tiers add users, not time; the bottleneck is the join, not the model
+Both datasets keep the *same date windows* at large scale and simply add users.
+
+| | small | large | factor |
+|---|---|---|---|
+| MIND impressions | 156,965 | 2,232,748 | **14×** |
+| EB-NeRD impressions | 232,887 | 12,063,890 | **52×** |
+| EB-NeRD users | 15,143 | 788,090 | 52× |
+| EB-NeRD articles | 20,738 | 125,541 | **6×** |
+| EB-NeRD extracted | ~93 MB | **~3.6 GB** | 39× |
+
+EB-NeRD large's `history.parquet` is **1.24 GB (train) + 1.13 GB (validation)** — larger than
+behaviors, because mean history is 160 clicks/user across 788K users.
+
+*Consequence, and this is the Q6 answer:* **encoding does not break at scale** — 125K articles is only
+6× small, still minutes on the 4060, and for EB-NeRD no encoding is needed at all thanks to F13.
+**Impression-to-history joining is what breaks.** At 12M impressions against 2.3 GB of history, the
+`--mem-gb` ceiling stops being advisory and the history must be streamed or chunked rather than
+loaded. Say "the join, not the model" in the note — it is a more specific and more defensible answer
+than "it gets slower". → [[5-Submission-and-Note]] Q6.
+
 ## Decisions taken
 
 | # | Decision | Rationale | Where |
@@ -127,6 +185,7 @@ Next action is the top unchecked item.
 - [x] Verify all raw archives without extracting
 - [x] Measure both datasets' schemas, row counts, date ranges, distributions
 - [x] Write the plan set (Pipeline + phases 1–5)
+- [x] Measure the large tiers and the embedding artifacts (F13–F15)
 - [ ] **Review this plan set and correct it** ← *current*
 - [ ] Confirm C2 pair declaration status (deadline passed)
 - [ ] Phase 1 step 1–2: extract + per-dataset readers
@@ -139,6 +198,16 @@ Next action is the top unchecked item.
 - [ ] Phase 5: submissions + note
 
 ## Log
+
+### 2026-08-18 — large-tier measurement
+- Measured MIND-large and EB-NeRD-large from the archives → F13–F15.
+- **F13 is the useful one:** the provided embedding artifacts cover all 125,541 EB-NeRD articles, and
+  small is a strict subset with zero missing ids, so the baseline row is a plain join.
+- **F14:** MIND-large test confirmed unlabelled (0 of 20,000 sampled rows carry `-1`/`-0`), spanning
+  16–22 Nov with 19% more articles than train.
+- **F15:** large adds users, not time. EB-NeRD 52× impressions, 3.6 GB extracted, history parquet
+  larger than behaviors. Gives Q6 a specific answer: the join breaks before the model does.
+- **No scope change.** Small tier remains the working and headline tier.
 
 ### 2026-08-18 — planning session
 - Verified all 10 archives intact (CRC over every member, central-directory read, no extraction).

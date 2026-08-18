@@ -1,5 +1,9 @@
 # Data — never commit (Q8 policy)
-data/
+#
+# Leading slash is load-bearing: a bare `data/` matches at ANY depth and
+# silently swallowed src/data/ (the readers, schema and extractor were left
+# untracked for a whole commit). Anchor it to the repo root.
+/data/
 *.zip
 *.parquet
 

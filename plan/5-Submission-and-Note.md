@@ -1,0 +1,75 @@
+---
+type: note
+kind: reference
+title: Phase 5 — Codabench submission and design note (Q5–Q7)
+status: planned
+---
+
+# Phase 5 — Submission and design note (Q5, Q6, Q7)
+
+**Outline only, deliberately.** The content of this phase is determined by what phases 1–4 actually
+produce; writing it in detail now would mean inventing results. It is expanded once the harness has
+run.
+
+> [!abstract] What this phase commits to
+> Predictions submitted to **both** Codabench leaderboards, a **≤4-page design note**, screenshots,
+> and a curated **AI usage log**. Grading is *never* on leaderboard rank — it is on pipeline
+> correctness, system design, ablation rigour, scale analysis, and note clarity.
+
+## Q5 — Codabench
+
+| | MIND | EB-NeRD |
+|---|---|---|
+| Competition | [13967](https://www.codabench.org/competitions/13967/) | [2469](https://www.codabench.org/competitions/2469/) |
+| Test data | `MINDlarge_test.zip` ✅ downloaded | `ebnerd_testset.zip` ❌ **not downloaded** |
+| Registered? | ⬜ verify | ⬜ verify |
+
+> [!warning] Two asymmetries that bite late
+> 1. **MIND has no small test set.** Submitting means running the small-trained pipeline over the
+>    *large* unlabelled test set (1.5 GB). Feasible, but it is the one place large-tier data is
+>    unavoidable — do not discover this on 24 Aug.
+> 2. **EB-NeRD's test set is a separate 1.5 GB download** that is not yet started, and download
+>    throughput was measured at ~19 KB/s single-stream. Start it well before the deadline.
+
+Submission format: verify against each competition's example file before generating. EB-NeRD ships
+`predictions_large_random.zip` (220 MB) as a known-good format reference — worth fetching purely as
+insurance against a malformed upload.
+
+## Q6 — Design note (≤4 pages)
+
+Four required sections. What goes in each is already accumulating in the phase files:
+
+| Section | Source |
+|---|---|
+| What you built + key choices | The D-decisions across phases 1–4 |
+| **Alternatives considered and why** | Every D-decision's alternatives table — this is why they are written that way |
+| Observations (lexical vs. semantic, dataset differences) | Phase 3 D6 hypotheses vs. what the harness actually found |
+| **Where it breaks at 10×** | Phase 3 HNSW ablation, encoder throughput, index memory, demo-vs-small timings |
+
+**The 10× question, concretely:** measure at two scales already available (demo and small), extrapolate,
+and name where the curve bends — inverted-index RAM, ANN build time, whether the pipeline becomes
+I/O- or compute-bound. Having the large tiers downloaded means one real anchor point is optionally
+available, which beats pure projection.
+
+## Q7 — Deliverables checklist
+
+- [ ] **Code** on GitHub Classroom — pipeline, models, harness, prediction files, `README.md` with
+      one-command reproduce. No large files.
+- [ ] **Design note** ≤4 pages → Moodle
+- [ ] **Leaderboard screenshots** from both competitions
+- [ ] **AI usage log** — curated with `/ai-log`, marking AI-generated vs. hand-written code
+
+> [!info] The repo does not exist yet
+> GitHub Classroom has not been accepted (as of 2026-08-18). The local repo is on `main` with two
+> commits. When the Classroom repo appears: `git remote add origin <url>` and push — history
+> transfers intact. Per IRE conventions, **clone and extend the Classroom repo rather than inventing
+> a parallel layout** if it ships with a structure.
+
+## Q8 — Git policy
+
+- [x] `.gitignore` covers `*.zip`, `*.pt`, `*.ckpt`, `__pycache__/`, `data/` — verified
+- [ ] Frequent, meaningful commits (2 so far)
+- [ ] No force-pushes after the deadline
+
+---
+[[4-Evaluation-Harness|← Phase 4]] · [[Pipeline|architecture]] · [[execution_plan_log|log]]

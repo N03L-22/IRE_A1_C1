@@ -10,21 +10,28 @@ Running log of **what we decided, why, what is done and what is not**. One task 
 correct before starting the next. Doc and data-layout work come before coding.
 
 > [!abstract] Where things stand (2026-08-18)
-> **Planning complete; no pipeline code written yet.** All raw data for the small tier is downloaded
-> and verified. The plan set ([[Pipeline]] + phases 1–5) is written, with every design decision
-> carrying its alternatives and rationale.
+> **Q1 is essentially done.** Both datasets build into one unified, temporally-split store in 42 s,
+> with the leakage boundary verified by a test that is itself proven to fail when the boundary breaks.
 >
 > | Item | State |
 > |---|---|
 > | Raw data (small tier) | ✅ downloaded, all archives CRC-verified |
-> | Git repo | ✅ `main`, 2 commits, `data/` correctly ignored |
+> | Git repo | ✅ `main`, 5 commits, `data/` correctly ignored |
 > | Plan docs | ✅ this set |
-> | Pipeline code | ⬜ none — next step |
+> | **Q1.1** download | ✅ small tier complete |
+> | **Q1.2** unified schema | ✅ `src/data/clean.py`, both datasets |
+> | **Q1.3** temporal split | ✅ `src/data/split.py`, ordering asserted |
+> | **Q1.4** feature store | 🟡 parquet store exists; feature columns beyond retrieval pending |
+> | **Q1.5** one-command rebuild | ✅ `make clean && make data && make store` |
+> | **Q9** leakage test | ✅ 38 tests, incl. mutation tests that prove the checker bites |
+> | Phases 2–4 | ⬜ next |
 > | `ebnerd_testset.zip` | ❌ not downloaded — **blocks Q5 only** |
 > | GitHub Classroom repo | ❌ not accepted yet |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F15.
+> Built store: 272 MB parquet, `data/store/{mind,ebnerd}/` + a manifest per dataset.
+>
+> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F20.
 >
 > **Large tiers measured (F13–F15) but still deliberately idle.** The headline numbers stay on small;
 > what the measurement bought is a concrete Q6 scale answer and a cheaper baseline, not a change of
@@ -206,6 +213,60 @@ is the same argument [[1-Data-Pipeline]] D3 makes for taking the *union* of MIND
 files — and it is now demonstrated rather than argued. Worth one line in the design note as a
 methodology point: a recall ceiling imposed by the harness is invisible in the output.
 
+### F18 — EB-NeRD's history files are *already* boundary-partitioned by the authors
+Truncation drops **0.0% of clicks** on every EB-NeRD split. That looked like a bug; it is not.
+Measured on demo:
+
+| | window |
+|---|---|
+| train **history** | 2023-04-27 07:00:05 .. **2023-05-18 06:59:51** |
+| train **impressions** | **2023-05-18 07:18:10** .. 2023-05-25 06:58:46 |
+| validation history ends | 2023-05-25 06:59:54 |
+| validation impressions start | 2023-05-25 07:02:58 |
+
+The history window closes **8 minutes before** the train impressions open, and validation ships a
+**separate** history file closing 3 minutes before its own impressions. Checked directly: **0 of
+3,000** impressions have any history click at or after the impression time.
+
+*Consequence — this changes how the Q9 claim must be worded.* Our truncation is correct and it runs,
+but on EB-NeRD it is **enforcing a boundary the authors already enforced**, not repairing a violation.
+Reporting "we removed post-boundary clicks" would overstate what happened. The honest claim is:
+**"the boundary was verified to hold; the shipped history required no truncation."** That is a
+stronger statement than a drop percentage, because it is checkable — and `check_no_leakage` proves
+it rather than assuming it.
+
+The truncation code still earns its place: it is what makes the property *verified* rather than
+*assumed*, it is what the Q9 mutation test exercises, and it is required the moment we re-draw the
+split boundary ourselves (any val cut inside the train window makes history straddle it).
+
+### F19 — MIND's realised split is 61/7/32, not the ~80/10/10 F4 predicted
+Built proportions, both datasets, small tier:
+
+| dataset | train | val | test | span |
+|---|---|---|---|---|
+| **MIND** | 141,265 (**61.4%**) | 15,700 (6.8%) | 73,152 (**31.8%**) | 9–15 Nov 2019 |
+| **EB-NeRD** | 209,597 (43.9%) | 23,290 (4.9%) | 244,647 (51.2%) | 18 May – 1 Jun 2023 |
+
+**F4's estimate for MIND was wrong.** It reasoned from *days* (6 train : 1 dev ≈ 86/14) but the
+split is over *impressions*, and MIND's single dev day carries 73,152 impressions — far denser than
+an average train day (~26K). So test is 32% of the labelled data, not 10%.
+
+*Consequence:* none for correctness — the rule (hold out the official period, carve val from the
+train tail) is unchanged and still right. But **the design note must report realised proportions, not
+intended ones**, and F4's "≈80/10/10 on MIND" should not be quoted. Supersedes that estimate.
+Reinforces F4's actual point: a literal 80/10/10 fits neither dataset, and saying so with measured
+numbers is the observation.
+
+### F20 — MIND's article union is 65,238, larger than either split alone
+Train `news.tsv` has 51,282 articles, dev has 42,416, and the de-duplicated union is **65,238** — so
+the two files share only 28,460 articles and **dev contributes 13,956 that train never saw** (21% of
+the corpus). Confirms [[1-Data-Pipeline]] D3: per-split corpora would leave those unretrievable and
+cap recall for a reason unrelated to any retriever, exactly the artefact F17 caught by accident.
+
+Also measured: **0% of MIND articles carry a publish time** vs **100% of EB-NeRD's**. This is the
+blocker for applying F16's recency filter to MIND, and it is now confirmed on the real store rather
+than inferred from the schema.
+
 ## Decisions taken
 
 | # | Decision | Rationale | Where |
@@ -238,18 +299,40 @@ Next action is the top unchecked item.
 - [x] Measure both datasets' schemas, row counts, date ranges, distributions
 - [x] Write the plan set (Pipeline + phases 1–5)
 - [x] Measure the large tiers and the embedding artifacts (F13–F15)
-- [ ] **Review this plan set and correct it** ← *current*
+- [x] Phase 1 step 1–2: extract + per-dataset readers
+- [x] Phase 1 step 3: unified schema (`src/data/clean.py`)
+- [x] Phase 1 step 4–5: temporal split + history truncation (`src/data/split.py`)
+- [x] Phase 1 step 7: leakage test, with the mutation test that gives it teeth
+- [ ] **Review the built store, then start Phase 2** ← *current*
 - [ ] Confirm C2 pair declaration status (deadline passed)
-- [ ] Phase 1 step 1–2: extract + per-dataset readers
-- [ ] Phase 1 step 3: unified schema
-- [ ] Phase 1 step 4–5: temporal split + history truncation
-- [ ] Phase 1 step 6–7: feature store + leakage test
+- [ ] Phase 1 step 6: feature-store polish — article/user feature columns beyond
+      what retrieval needs (Q1.4 reading of "small, reusable feature store")
 - [ ] Phase 2: BM25 + baselines
 - [ ] Phase 3: embeddings + ANN
 - [ ] Phase 4: harness
 - [ ] Phase 5: submissions + note
 
 ## Log
+
+### 2026-08-18 — Phase 1 steps 3–5 built and run
+- `src/data/clean.py` (unify + drive), `src/data/split.py` (temporal split, truncation, leakage
+  checker), `tests/test_no_leakage.py` (Q9, with mutation tests).
+- **Store built for both datasets, small tier, in 42 s.** MIND 9.0 s, EB-NeRD 32.1 s. 272 MB of
+  parquet under `data/store/`, with a `manifest.json` per dataset recording counts, realised
+  proportions, spans, verifiability and the resolved resource budget.
+- **38 tests pass**, including the real-store leakage checks read back off disk.
+- Findings **F18–F20**. Two of them correct earlier claims:
+  - **F18:** EB-NeRD's history is already boundary-partitioned by the authors (history window closes
+    8 min before impressions open), so truncation drops 0.0%. Correct behaviour, but the Q9 claim must
+    be *"verified to hold"*, not *"we removed post-boundary clicks"*.
+  - **F19 supersedes F4's MIND estimate:** realised split is **61/7/32**, not ~80/10/10. F4 reasoned
+    from days; the split is over impressions, and MIND's single dev day is ~3× denser than an average
+    train day. The rule is unchanged; the reported numbers must be the realised ones.
+  - **F20:** MIND's article union is 65,238 — dev contributes 13,956 articles train never saw (21%).
+    Confirms D3. And 0% of MIND articles carry a publish time vs 100% of EB-NeRD's, which is what
+    blocks F16's recency filter on MIND.
+- Fixed a `.gitignore` bug: a bare `data/` pattern matches at any depth and had silently untracked
+  `src/data/` — the three modules the previous commit was mostly about. Anchored to `/data/`.
 
 ### 2026-08-18 — large-tier measurement
 - Measured MIND-large and EB-NeRD-large from the archives → F13–F15.

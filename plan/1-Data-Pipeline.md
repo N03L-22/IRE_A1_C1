@@ -299,13 +299,36 @@ Phase 4, because it is the acceptance criterion for the phase.
 
 ## Acceptance criteria
 
-- [ ] `make data` from an empty `data/store/` rebuilds everything from the zips
-- [ ] Both datasets produce identical column names and dtypes
-- [ ] Split proportions reported per dataset; no impression appears in two splits
-- [ ] For every test impression: `max(history_time) < impression_time` — asserted, not assumed
-- [ ] `tests/test_no_leakage.py` **fails** when the boundary is deliberately broken
-- [ ] Row counts logged and matching the measured table in [[Pipeline]]
-- [ ] Resolved `--n-jobs` / `--mem-gb` written into a run manifest beside the store
+- [x] `make clean && make store` rebuilds everything from the zips — **42.5 s**
+- [x] Both datasets produce identical column names and dtypes (shared pyarrow schema)
+- [x] Split proportions reported per dataset; no impression appears in two splits
+- [x] For every test impression: `max(history_time) < impression_time` — asserted where checkable
+- [x] `tests/test_no_leakage.py` **fails** when the boundary is deliberately broken
+- [x] Row counts logged and matching the measured table in [[Pipeline]]
+- [x] Resolved `--n-jobs` / `--mem-gb` written into a run manifest beside the store
+- [ ] Q1.4 feature columns beyond what retrieval needs (recency, popularity, history length)
+
+### Built, 2026-08-18
+
+| dataset | articles | train | val | test | build |
+|---|---|---|---|---|---|
+| **MIND** | 65,238 | 141,265 (61.4%) | 15,700 (6.8%) | 73,152 (31.8%) | 9.0 s |
+| **EB-NeRD** | 20,738 | 209,597 (43.9%) | 23,290 (4.9%) | 244,647 (51.2%) | 32.1 s |
+
+272 MB of parquet in `data/store/`, a `manifest.json` per dataset, **38 tests passing**.
+
+> [!warning] Two results that correct this document's own predictions
+> **D1's "≈80/10/10 on MIND" was wrong — it is 61/7/32 (F19).** The estimate reasoned from *days*
+> (6 train : 1 dev) but the split is over *impressions*, and MIND's single dev day holds 73,152 of
+> them — roughly 3× an average train day. The *rule* is unchanged and still correct; only the
+> predicted numbers were off. **Quote realised proportions in the design note, never intended ones.**
+>
+> **D2's truncation drops 0.0% on EB-NeRD, because the authors already partitioned it (F18).** The
+> train history window closes 8 minutes before train impressions open, and validation ships its own
+> history file. So the honest Q9 claim is **"the boundary was verified to hold"**, not "we removed
+> post-boundary clicks". The truncation code still earns its place — it is what makes the property
+> *verified* rather than *assumed*, and it becomes load-bearing the moment we re-draw the boundary
+> ourselves, since any val cut inside the train window makes history straddle it.
 
 ## Open questions for this phase
 

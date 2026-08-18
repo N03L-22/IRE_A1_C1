@@ -162,3 +162,7 @@ real verification loop is the point, not a transcript.
 ### 2026-08-18 17:05 · `e71a9c7f`
 
 > continue
+
+### 2026-08-18 17:20 · `e71a9c7f`
+
+> continue with steps 3-5. make sure these are also logged.

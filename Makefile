@@ -15,9 +15,9 @@ N_JOBS  ?= 26
 MEM_GB  ?= 26
 BUDGET  := --n-jobs $(N_JOBS) --mem-gb $(MEM_GB)
 
-.PHONY: all data data-demo data-artifacts smoke test clean clean-all help
+.PHONY: all data data-demo data-artifacts store smoke test clean clean-all help
 
-all: data test
+all: store test
 
 ## data: extract the small tier -- the working and headline tier
 data: $(WORK)/.small.stamp
@@ -38,6 +38,10 @@ $(WORK)/.demo.stamp: $(RAW)/ebnerd/ebnerd_demo.zip
 ## data-artifacts: extract the provided EB-NeRD embeddings (Phase 3 baseline)
 data-artifacts:
 	$(PYTHON) -m src.data.extract --tier artifacts
+
+## store: unify + temporally split both datasets -> data/store (Q1.2-Q1.4)
+store: data
+	$(PYTHON) -m src.data.clean --tier small $(BUDGET)
 
 ## smoke: walking skeleton end to end on the demo tier
 smoke: data-demo

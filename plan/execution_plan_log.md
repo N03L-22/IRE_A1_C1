@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F57.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F58.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -612,6 +612,42 @@ The brief names BM25 and TF-IDF on the lexical axis. Both are built and compared
 space as worth ~0.01, and the measured lever on this data is the candidate *pool* (F16/F41: 33x),
 not the weighting scheme. BM25F is recorded as the strongest untested lexical idea, with the
 evidence that motivates it, rather than being tried at the deadline.
+
+### F58 — 256-d transfers to the leaderboard, but at 1/44th the offline effect size
+Submission 901876, MIND fusion at 256-d. Screenshot in `report/figs/leaderboard_mind.png`.
+
+| Submission | Config | Leaderboard AUC |
+|---|---|---|
+| 901650 | bm25, 384-d | 0.5568 |
+| 901779 | fusion, 384-d | 0.5934 |
+| **901876** | **fusion, 256-d** | **0.5938** |
+
+**+0.0004 over the 384-d fusion.** F47 measured 256-d beating 384-d by **+0.0175 recall@50** offline
+(paired, CI excluding zero) on EB-NeRD inside the 24h window. On the MIND leaderboard the gain is
+**1/44th of that**.
+
+*Three readings, and honesty requires holding all of them:*
+
+1. **The direction is right.** 256-d did not hurt, which is the claim that matters for shipping it —
+   a third less memory for no loss, and nominally a small gain.
+2. **The magnitude did not transfer.** Different dataset (EB-NeRD → MIND), different metric
+   (recall@50 → AUC), different regime (inside a 24h window → full slate ranking). Any of those
+   could explain it; we cannot separate them from one submission.
+3. **+0.0004 is almost certainly inside the leaderboard's own noise.** It should be reported as
+   *"no measurable change, and cheaper"*, not as a confirmed improvement.
+
+> [!important] The offline/leaderboard relationship is now three-for-three unreliable
+> - **F34:** offline said AUC 0.4981 [0.4776, 0.5190]; leaderboard 0.5568 — *outside* the interval.
+> - **F42:** offline said fusion was **not significant** (differing on 55/800); leaderboard +0.0366.
+> - **F58:** offline said 256-d was **significant at +0.0175**; leaderboard +0.0004.
+>
+> It has now understated a real effect, missed one entirely, and overstated one. **The offline
+> harness at n=4,000 is not a reliable proxy for leaderboard rank in either direction.** It remains
+> valuable for what it was built for — catching leakage, exposing the recency effect, slicing — but
+> a retriever or parameter choice is only settled by submitting it.
+>
+> This is the strongest methodological finding in the project, and it took three leaderboard
+> submissions to establish.
 
 ## Findings
 

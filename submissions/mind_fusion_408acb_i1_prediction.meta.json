@@ -30,5 +30,16 @@
   "lines": 2370727,
   "cold_slates": 29108,
   "seconds": 2287.9,
-  "bytes": 291329312
+  "bytes": 291329312,
+  "leaderboard": {
+    "submission_id": 901876,
+    "auc": 0.5938,
+    "date": "2026-08-26T03:46"
+  },
+  "vs_384d": {
+    "baseline_id": 901779,
+    "baseline_auc": 0.5934,
+    "delta": 0.0004,
+    "note": "F47 predicted 256-d better from an EB-NeRD offline sweep; on the MIND leaderboard the gain is +0.0004 -- directionally right, far smaller than offline"
+  }
 }

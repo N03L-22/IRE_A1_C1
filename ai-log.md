@@ -810,3 +810,15 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 03:31 · `0df5ffb1` ⟨reconstructed⟩
 
 > if we were to use polar and GPU based scoring, would the complete redesign take long? would the effective outcome be faster while maintaining or improving score?
+
+### 2026-08-26 03:43 · `0df5ffb1`
+
+> what were the findings? from 256d?
+
+### 2026-08-26 03:47 · `0df5ffb1`
+
+> submitting the 256d one now. the ebnerd will take time. the system is loaded with lots of requests.
+
+### 2026-08-26 03:49 · `0df5ffb1`
+
+> lets try the polar for now with GPU for the semantic. i believe the fusion should be doing better instead of sem or lex alone. maybe other params like history or changing the decay or strictly taking last 3?  try these before polar with GPU in branch and then merge if good?

@@ -111,6 +111,27 @@ def default_ef_search(n_vectors: int) -> int:
     return EF_SEARCH_LARGE
 
 
+def decay_weights(n: int, kind: str = "log", lam: float = 0.3) -> np.ndarray:
+    """Positional weights over a click history, newest last.
+
+    Three shapes, swept in F58 because D-LEX-QUERY chose `log` by reasoning
+    and never measured the alternatives:
+
+    ``log``   w = 1 / log2(rank + 2). Mild: the 20th click keeps ~0.28 of the
+              first's weight, so older interests still contribute.
+    ``exp``   w = exp(-lam * rank). Aggressive: at lam=0.3 the 20th click is
+              at 0.002, making the query effectively the last 2-3 titles.
+    ``flat``  w = 1. The brief's suggested plain mean, and the honest baseline
+              -- if decay is not measurably better than none, say so.
+    """
+    ranks = np.arange(n, dtype=np.float32)
+    if kind == "flat":
+        return np.ones(n, dtype=np.float32)
+    if kind == "exp":
+        return np.exp(-lam * ranks).astype(np.float32)
+    return 1.0 / np.log2(ranks + 2.0)
+
+
 def log_decay_weights(n: int) -> np.ndarray:
     """Mild positional decay: w_j = 1 / log2(rank_from_recent + 2).
 
@@ -133,7 +154,10 @@ def log_decay_weights(n: int) -> np.ndarray:
 
 
 def build_user_vector(
-    vectors: np.ndarray, tau: float = DEFAULT_COHERENCE_TAU
+    vectors: np.ndarray,
+    tau: float = DEFAULT_COHERENCE_TAU,
+    decay: str = "log",
+    lam: float = 0.3,
 ) -> tuple[np.ndarray, str]:
     """Turn a user's clicked-article vectors into one query vector.
 
@@ -159,7 +183,7 @@ def build_user_vector(
     if n == 1:
         return vectors[0], "single"
 
-    weights = log_decay_weights(n)[::-1]  # oldest first -> newest heaviest
+    weights = decay_weights(n, decay, lam)[::-1]  # oldest first -> newest heaviest
     weighted = (vectors * weights[:, None]).sum(axis=0) / weights.sum()
     weighted = weighted / max(np.linalg.norm(weighted), 1e-12)
 
@@ -170,7 +194,7 @@ def build_user_vector(
     # Incoherent: try just the recent half, which is likelier to be one topic.
     half = max(2, n // 2)
     recent = vectors[-half:]
-    w2 = log_decay_weights(half)[::-1]
+    w2 = decay_weights(half, decay, lam)[::-1]
     recent_vec = (recent * w2[:, None]).sum(axis=0) / w2.sum()
     recent_vec = recent_vec / max(np.linalg.norm(recent_vec), 1e-12)
 
@@ -200,6 +224,8 @@ class SemanticRetriever:
         ef_search: int | None = None,
         m: int = DEFAULT_M,
         truncate_dim: int | None = DEFAULT_TRUNCATE_DIM,
+        decay: str = "log",
+        lam: float = 0.3,
         vectors: np.ndarray | None = None,
         vector_ids: list[str] | None = None,
     ) -> None:
@@ -211,6 +237,8 @@ class SemanticRetriever:
         #: None means "derive from corpus size at index time" (F52).
         self.m = m
         self.truncate_dim = truncate_dim
+        self.decay = decay
+        self.lam = lam
         #: None means "derive from corpus size at index time" (F52).
         self.ef_search = ef_search
         self.name = f"semantic({model_key},tau={tau:g},n={last_n})"
@@ -325,7 +353,9 @@ class SemanticRetriever:
             rows = [self._by_id[t] for t in recent if t in self._by_id]
         if not rows:
             return None
-        vec, strategy = build_user_vector(self._vecs[rows], tau=self.tau)
+        vec, strategy = build_user_vector(
+            self._vecs[rows], tau=self.tau, decay=self.decay, lam=self.lam
+        )
         self.strategy_counts[strategy] = self.strategy_counts.get(strategy, 0) + 1
         return vec
 

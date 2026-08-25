@@ -399,3 +399,15 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 00:06 · `0df5ffb1`
 
 > can the hook be modified to handle mid also?
+
+### 2026-08-26 00:11 · `0df5ffb1`
+
+> so shall i resubmit mind then? if there was performance improvements
+
+### 2026-08-26 00:12 · `0df5ffb1`
+
+> do the fusion resubmit
+
+### 2026-08-26 00:12 · `0df5ffb1`
+
+> do the fusion resubmit, for both, one after another, consider the resources and do

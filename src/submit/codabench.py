@@ -36,6 +36,8 @@ from ..data.readers import SPLIT_NAMES, get_reader
 from ..data.schema import Article
 from ..resources import add_arguments, from_args
 from ..retrieval.bm25 import BM25Retriever
+from ..retrieval.fusion import RRFusion
+from ..retrieval.semantic import HistoryIdRetriever
 
 log = logging.getLogger("submit")
 
@@ -52,6 +54,32 @@ WORKER_GB = 9.5
 #: Left free for the single-threaded merge, which builds a set over 13.3M
 #: impression ids after the workers exit.
 MERGE_HEADROOM_GB = 3.0
+
+def build_retriever(kind: str, dataset: str):
+    """The retriever a submission is generated with.
+
+    Defaults to fusion: on MIND it was the best retriever on **both**
+    leaderboard metrics (AUC 0.5095 vs BM25's 0.5057, nDCG@10 0.2914 vs
+    0.2853, F39). The margin is small and the CIs overlap, so this is a
+    measured preference, not a demonstrated improvement.
+
+    On EB-NeRD fusion showed **no gain** over its components -- the two
+    retrievers agree there, and RRF needs disagreement. It is still offered so
+    both datasets can be generated the same way, but `bm25` remains a
+    defensible choice for EB-NeRD and is what the first submission used.
+    """
+    params = BEST[dataset]
+    if kind == "bm25":
+        return BM25Retriever(**params)
+    if kind == "semantic":
+        return HistoryIdRetriever(model_key="minilm", last_n=20)
+    if kind == "fusion":
+        return RRFusion(
+            [BM25Retriever(**params), HistoryIdRetriever(model_key="minilm", last_n=20)],
+            name="rrf(bm25+semantic)",
+        )
+    raise ValueError(f"unknown retriever {kind!r}")
+
 
 #: Params chosen on val in the Phase 2 sweep (F23), before test was touched.
 BEST = {
@@ -258,15 +286,22 @@ class CompactHistories:
         return [self._texts[i] for i, t in zip(ids, times) if t < cutoff]
 
 
-def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str) -> None:
-    global _WORKER
+#: Set by build_predictions_parallel before the pool starts, so each worker
+#: constructs the same retriever the parent was asked for.
+_WORKER_KIND = "bm25"
+
+
+def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str,
+                 retriever_kind: str = "bm25") -> None:
+    global _WORKER, _WORKER_KIND
+    _WORKER_KIND = retriever_kind
     logging.getLogger("bm25s").setLevel(logging.ERROR)
     reader = get_reader(dataset, Path(work_dir), tier)
     try:
         articles = {a.article_id: a for a in reader.articles(splits=(test_split,))}
     except TypeError:
         articles = {a.article_id: a for a in reader.articles()}
-    retriever = BM25Retriever(**BEST[dataset])
+    retriever = build_retriever(_WORKER_KIND, dataset)
     retriever.index(list(articles.values()))
 
     texts_by_id = {aid: a.retrieval_text for aid, a in articles.items()}
@@ -311,6 +346,7 @@ def build_predictions_parallel(
     out_path: Path,
     n_jobs: int,
     allow_swap: bool = False,
+    retriever_kind: str = "bm25",
 ) -> dict:
     """Row-group-parallel prediction. Falls back to serial if unsupported.
 
@@ -372,7 +408,7 @@ def build_predictions_parallel(
     pool = ProcessPoolExecutor(
         max_workers=min(n_jobs, n_groups),
         initializer=_init_worker,
-        initargs=(dataset, tier, str(work_dir), test_split),
+        initargs=(dataset, tier, str(work_dir), test_split, retriever_kind),
     )
     try:
         for rg_idx, shard, n, c in pool.map(_predict_row_group, tasks):
@@ -457,6 +493,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out-dir", type=Path, default=Path("submissions"))
     p.add_argument("--max-k", type=int, default=500)
     p.add_argument(
+        "--retriever", choices=["bm25", "semantic", "fusion"], default="fusion",
+        help="which retriever generates the predictions (default: fusion, "
+             "the best MIND retriever on both leaderboard metrics -- F39)",
+    )
+    p.add_argument(
         "--allow-swap",
         action="store_true",
         help="run the requested worker count even if it exceeds free RAM. "
@@ -495,7 +536,7 @@ def main(argv: list[str] | None = None) -> int:
     log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
 
     params = BEST[args.dataset]
-    retriever = BM25Retriever(**params)
+    retriever = build_retriever(args.retriever, args.dataset)
     t0 = time.perf_counter()
     retriever.index(list(articles.values()))
     log.info("indexed %s in %.1fs", retriever.name, time.perf_counter() - t0)
@@ -506,7 +547,7 @@ def main(argv: list[str] | None = None) -> int:
         # parallelism. MIND is TSV and has none, so it takes the serial path.
         stats = build_predictions_parallel(
             args.dataset, args.tier, args.work_dir, test_split, txt, budget.n_jobs,
-            allow_swap=args.allow_swap,
+            allow_swap=args.allow_swap, retriever_kind=args.retriever,
         )
     else:
         stats = build_predictions(
@@ -532,7 +573,7 @@ def main(argv: list[str] | None = None) -> int:
     meta = args.out_dir / f"{args.dataset}_prediction.meta.json"
     meta.write_text(json.dumps({
         "dataset": args.dataset, "tier": args.tier,
-        "retriever": retriever.name, "params": params,
+        "retriever": retriever.name, "retriever_kind": args.retriever, "params": params,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "budget": budget.as_dict(), **stats,
     }, indent=2))

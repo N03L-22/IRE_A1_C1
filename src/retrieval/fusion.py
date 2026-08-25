@@ -86,6 +86,36 @@ class RRFusion:
         return ranked[:k]
 
 
+    def score_subset(
+        self, history_text: list[str], subset: list[str]
+    ) -> dict[str, float]:
+        """Fuse over a slate directly -- the submission path.
+
+        RRF needs only *ranks*, and each component can rank a slate without a
+        full-corpus retrieval. On a 13.3M-impression run that is the difference
+        between minutes and hours (F32).
+
+        > [!warning] This is NOT a drop-in equivalent of ``retrieve()``
+        > ``retrieve()`` ranks each component over the **whole corpus** and
+        > fuses those global ranks. This ranks each component **within the
+        > slate**. A document lying 3rd of 20,738 globally but 1st of 30
+        > in-slate receives a different RRF weight, so the two orderings can
+        > differ: measured **15 discordant pairs out of 435** (3.4%) on a
+        > 400-document toy corpus.
+        >
+        > The in-slate frame is the correct one *for a submission* -- the
+        > output is a permutation of the candidates shown, and a global rank
+        > for a document that is not in the slate is irrelevant to it. But do
+        > not use this for a reported metric, and do not assume a fusion
+        > submission reproduces the harness's fusion row exactly.
+        """
+        scores: dict[str, float] = {}
+        for retriever, weight in zip(self.retrievers, self.weights):
+            for aid, rank in _subset_ranks(retriever, history_text, subset).items():
+                scores[aid] = scores.get(aid, 0.0) + weight / (self.k + rank)
+        return scores
+
+
 class PopularityPrior:
     """Blend a retriever with train-split popularity.
 
@@ -131,3 +161,17 @@ class PopularityPrior:
 
         ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
         return ranked[:k]
+
+
+def _subset_ranks(retriever, history_text: list[str], subset: list[str]) -> dict[str, int]:
+    """Rank a slate with one retriever, returning id -> 1-based rank.
+
+    RRF works on ranks, so a component that can score a subset directly does
+    not need a full retrieval -- which is what keeps fusion affordable on a
+    13.3M-impression submission run.
+    """
+    scored = retriever.score_subset(history_text, subset)
+    if not scored:
+        return {}
+    order = sorted(scored.items(), key=lambda kv: (-kv[1], kv[0]))
+    return {aid: i for i, (aid, _s) in enumerate(order, start=1)}

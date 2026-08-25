@@ -185,3 +185,21 @@ def test_worker_budget_constants_are_sane() -> None:
     # The merge builds a set over 13.3M ints; 3 GB is the measured need with
     # margin. If someone drops this to zero the stall comes straight back.
     assert MERGE_HEADROOM_GB >= 2.0, "not enough headroom reserved for the merge"
+
+
+def test_build_retriever_accepts_all_three_kinds() -> None:
+    """The submission path must be able to ship any scored retriever.
+
+    The first MIND submission was BM25 only, because Q3 did not exist yet.
+    Once fusion measured best on both leaderboard metrics (F39), hardcoding
+    one retriever became the thing stopping us acting on our own results.
+    """
+    from src.submit.codabench import build_retriever
+
+    for kind in ("bm25", "semantic", "fusion"):
+        r = build_retriever(kind, "mind")
+        assert hasattr(r, "score_subset"), f"{kind} cannot take the fast path"
+        assert hasattr(r, "index") and hasattr(r, "retrieve")
+
+    with pytest.raises(ValueError):
+        build_retriever("nonsense", "mind")

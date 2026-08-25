@@ -39,3 +39,6 @@ report/*.toc
 
 # Embedding cache -- regenerable in ~15s by re-running; keyed on model+corpus.
 data/store/embeddings/
+
+# Backup of the superseded bm25-only submission
+submissions/*.bak

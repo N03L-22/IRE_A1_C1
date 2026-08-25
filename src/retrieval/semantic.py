@@ -226,6 +226,40 @@ class SemanticRetriever:
         self.strategy_counts[strategy] = self.strategy_counts.get(strategy, 0) + 1
         return vec
 
+    def score_subset(
+        self, history_text: list[str], subset: list[str]
+    ) -> dict[str, float]:
+        """Score only ``subset`` -- the submission path's fast lane.
+
+        Mirrors ``BM25Retriever.score_subset``: ranking an impression's slate
+        needs scores for its ~11-40 candidates, not a top-K over 20K-65K
+        vectors. Here it is one small matrix-vector product instead of a full
+        corpus scan.
+
+        Unlike the BM25 pair, this is **numerically identical** to what
+        ``retrieve()`` would give for the same documents -- both compute the
+        same dot product against the same L2-normalised vectors, so there is
+        no Lucene-vs-Robertson discrepancy to reason about.
+        """
+        if self._vecs is None:
+            raise RuntimeError("index() must be called before score_subset()")
+
+        q = self._query_vector(history_text)
+        if q is None:
+            return {}
+
+        rows, ids = [], []
+        for aid in subset:
+            r = self._by_id.get(aid)
+            if r is not None:
+                rows.append(r)
+                ids.append(aid)
+        if not rows:
+            return {}
+
+        scores = self._vecs[rows] @ q
+        return {aid: float(s) for aid, s in zip(ids, scores)}
+
     def retrieve(
         self, history_text: list[str], k: int, at_time: datetime | None = None
     ) -> list[tuple[str, float]]:

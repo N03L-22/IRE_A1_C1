@@ -242,6 +242,44 @@ outside the system.
 
 ---
 
+## 9. Optimising 11% of a pipeline and projecting a 1,200× speedup
+
+**Where:** `decisions.md` Part 4c, the Polars + GPU costing
+
+**What it did.** Costed a GPU rewrite of the semantic scoring path at **~1,200× on that stage** and
+89 min → 37 min end-to-end. On that basis the work looked clearly worth 4–6 hours. Built on branch
+`polars-gpu`; the measured end-to-end gain is **~4%**.
+
+**Why it happened — two errors of the same shape.** Both are *timing a fragment and quoting it as
+the whole*:
+
+1. **The baseline was the wrong algorithm.** The projection compared the GPU against 623 µs/slate —
+   *full-corpus retrieval*, which bug/finding F32 had replaced with direct slate scoring a week
+   earlier. The real CPU path runs at **105 µs/slate**. I benchmarked against code that was no
+   longer running.
+2. **I never asked what fraction of the run the stage was.** Semantic slate scoring is **11%** of a
+   MIND fusion run (249 s of 2,288 s). Query-vector construction — pure CPU, untouched by batching —
+   is **67% of the batched path**, so even a *free* GPU stage caps the whole thing at **2.4×**.
+
+**What caught it.** Building it and profiling end-to-end instead of per-stage. Nothing else would
+have: the per-stage number was real, reproducible, and completely misleading.
+
+**The fix.** The projection is corrected in place with the measurement beside it rather than
+deleted, and the branch is not merged — 4% does not justify a CUDA dependency on the submission
+path. The code is correct and its merge gate passes; **the premise failed, not the implementation.**
+
+**The part that stings.** The stated reason for doing this was *"speed buys statistical power"* —
+faster runs would rescue ablations left underpowered at n=800. At 4% that is worthless (CI width
+falls as 1/√n). And the underpowered ablations were never compute-bound anyway: F46's dedup test
+differed on **4 impressions out of 800**. It was short of *effect size*, not CPU time.
+
+**Transferable lesson:** *profile the whole before optimising the part.* One `perf_counter` around
+the existing loop — under a minute — would have shown 11% and saved the entire estimate. This is
+bug 7 again in a new costume: **a measurement can be perfectly accurate and still answer a question
+nobody asked.**
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |
@@ -254,8 +292,9 @@ outside the system.
 | 6. BM25 score mismatch | No | Cross-checking two implementations |
 | 7. Random-vector benchmark | No | Questioning the input before publishing |
 | 8. Under-powered sample | No | An external number disagreeing |
+| 9. 1,200× speedup projection | No | Profiling end-to-end instead of per-stage |
 
-**Seven of eight did not crash.** The one that did — the filename — was the
+**Eight of nine did not crash.** The one that did — the filename — was the
 cheapest to fix and the least interesting.
 
 The working method, stated as a rule: **before running anything, write down

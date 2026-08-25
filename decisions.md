@@ -552,12 +552,40 @@ Against the current CPU path at **623 µs/slate (1,605 slates/s)**, that is **~1
 half**. Note batch=1 is *worse* than CPU — the entire gain is batching, and the GPU only makes it
 dramatic.
 
+> [!warning] **The ~1,200× above is wrong. It was built and measured on 2026-08-26 (F59): the real
+> end-to-end gain is 1.6×, and ~7% on a submission run.** The table is left standing because the
+> *way* it misleads is the finding. Two errors, both of the same kind — timing a fragment and
+> quoting it as the whole:
+>
+> 1. **The 623 µs/slate baseline is not slate scoring.** It is *full-corpus* retrieval, the thing
+>    F32 already replaced with `score_subset`. Measured on 4,000 real MIND slates, the CPU slate
+>    path runs at **105 µs/slate** — the projection compared the GPU against an algorithm the code
+>    had not used for a week.
+> 2. **The GPU stage is a third of the work it sits in.** Building the query vector is 67% of the
+>    batched path and is pure CPU that batching does not touch. **Even a free GPU stage caps the
+>    whole thing at 2.4× (Amdahl).**
+>
+> See F59 for the measured breakdown and the corrected end-to-end table.
+
 **End to end on EB-NeRD fusion (13.3M slates):**
 
 | | setup | scoring | total |
 |---|---|---|---|
 | Current | 168 s | 5,189 s | **89 min** |
 | GPU semantic side | 168 s | 2,075 s | **37 min** |
+
+> [!warning] Also superseded by F59. Built and measured; the honest version:
+>
+> | | measured |
+> |---|---|
+> | MIND fusion run, actual | **2,288 s** (`mind_fusion_408acb_i1.meta.json`) |
+> | of which semantic slate scoring, at 105 µs × 2.37M | **249 s — 11%** |
+> | removed by batching (1.6× on that 11%) | **~93 s** |
+> | **end-to-end gain** | **~4%, not 2.4×** |
+>
+> The 89 → 37 min projection assumed semantic scoring was 97% of the run. It is 11%. Everything
+> else — parquet I/O, history assembly, BM25, RRF, writing 2.37M lines — was already the bulk, and
+> none of it moves to the GPU.
 
 **~52 minutes saved, and then it stops** — because **BM25 becomes the new floor**. The lexical half
 is sparse-matrix CPU work; moving it would need a separate GPU sparse implementation. The I/O floor
@@ -590,6 +618,52 @@ minutes of compute, and several were left underpowered at n=800 because larger r
 (F46's dedup test resolved nothing at 4/800). A 2.4× faster pipeline means larger samples, which
 means the paired tests can actually resolve the differences they are asked about. **Speed buys
 statistical power, which is what most of the null results here were short of.**
+
+> [!important] **The compounding argument was the reason to build it, and F59 refuted it.**
+> "Speed buys statistical power" is sound in general and false here, because the premise was a
+> mismeasurement. At a real 1.6× on 11% of the run, a sample that took 10 minutes now takes 9.6 —
+> which buys **no** additional statistical power worth having, since CI width falls as $1/\sqrt{n}$
+> and a 4% time saving funds a 2% narrower interval.
+>
+> **What the underpowered ablations were actually short of was not speed.** F46's dedup test
+> resolved nothing because the two configurations *differed on 4 impressions out of 800* — the
+> experiment had almost no signal to detect, and running it 1,000× faster would have produced the
+> same null on a larger sample of the same near-identical rankings. Compute was never the binding
+> constraint; effect size was.
+>
+> **The transferable rule** (and the reason this stays in the record rather than being deleted):
+> *profile the whole before optimising the part.* One `time.perf_counter()` around the existing
+> submission loop — 30 seconds of work — would have shown semantic scoring at 11% and killed the
+> 4–6 hour estimate before it was spent. I measured the stage I intended to speed up and never
+> measured what fraction of the run that stage was. This is the same error as bug 7 in
+> `mistakes.md` (benchmarking on the wrong input), and it is now bug 9.
+
+## What was actually built, and what happened to it
+
+`src/retrieval/batched.py` and `tests/test_batched.py` on branch `polars-gpu`. The code is correct
+and the merge gate passes; it is the *premise* that failed, not the implementation.
+
+**Merge gate result** — 1,000 real MIND slates, paired:
+
+```
+max |score diff|   1.788e-07          (fp32 rounding, as expected)
+rank inversions    1 / 1,493,005      -> a genuine tie: the two scores
+                                         differ by 4.7e-09, below fp32
+                                         resolution near their magnitude
+```
+
+The one inversion is **not** a defect. Batching reorders floating-point accumulation, so two
+articles whose true scores are equal to within 5e-09 sort arbitrarily in *both* implementations.
+`tests/test_batched.py` therefore gates on **rank inversions separated by more than 1e-6**, which is
+the property a submission actually depends on — a submission file records a permutation, and only
+distinguishable pairs have a defined order. This is the same reasoning as bug 6 in `mistakes.md`:
+verify the property you depend on, not the one easiest to state.
+
+**Not merged to `main`.** A 4% gain does not justify adding a CUDA dependency to the submission
+path, and `main` must stay runnable on a machine without a GPU. The branch is kept, not deleted:
+the C-2 pipeline scores *every* article rather than an 11-item slate, so the ratio that makes this
+worthless here is exactly the ratio that may make it worthwhile there — but that will be decided by
+profiling C-2, not by reusing this projection.
 
 ---
 

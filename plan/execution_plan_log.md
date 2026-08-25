@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F58.**
+> **One day to the 2026-08-27 deadline. Findings F1–F59.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -648,6 +648,54 @@ Submission 901876, MIND fusion at 256-d. Screenshot in `report/figs/leaderboard_
 >
 > This is the strongest methodological finding in the project, and it took three leaderboard
 > submissions to establish.
+
+### F59 — The GPU rewrite was projected at ~1,200× and delivered ~4%, because the projection timed the wrong thing
+Branch `polars-gpu`, `src/retrieval/batched.py`. **A negative result, recorded in full because the
+error is more instructive than the code.**
+
+`decisions.md` Part 4c costed a Polars + GPU rewrite at **~1,200× on the semantic half** and
+89 min → 37 min end-to-end on EB-NeRD fusion. Built and measured on **4,000 real MIND slates**:
+
+| Path | ms/slate | |
+|---|---|---|
+| Unbatched CPU (`score_subset`) | 0.105 | the actual current code |
+| Batched GPU, end-to-end | 0.064 | **1.6×**, not 1,200× |
+| — of which query-vector build (CPU) | 0.043 | **67% of it, and batching does not touch this** |
+| — of which GPU `score_many` | 0.021 | 5× on this stage alone |
+
+**Amdahl ceiling: 2.4×, even if the GPU stage were entirely free.**
+
+Worse when scaled to a real run. MIND fusion took **2,288 s**; semantic slate scoring at 105 µs ×
+2.37M impressions is **249 s — 11% of it.** Batching removes ~93 s: **a ~4% end-to-end gain** for a
+4–6 hour rewrite and a CUDA dependency on the submission path.
+
+**The two mistakes, both the same shape — timing a fragment and quoting it as the whole:**
+
+1. **The 623 µs/slate baseline was full-corpus retrieval**, the algorithm F32 replaced a week
+   earlier. The projection benchmarked the GPU against code that was no longer running.
+2. **I never measured what fraction of the run the GPU stage was.** One `perf_counter` around the
+   existing loop — under a minute of work — would have shown 11% and killed the estimate before
+   the time was spent.
+
+> [!important] The refuted argument is the one that motivated the work
+> Part 4c argued *"speed buys statistical power"* — that faster runs would rescue the ablations left
+> underpowered at n=800. **That premise is now false twice over.** At 4%, a 10-minute ablation
+> becomes 9.6 minutes, and CI width falls as $1/\sqrt{n}$, so it funds a ~2% narrower interval.
+> And F46's dedup test was never compute-bound: the two configurations **differed on 4 impressions
+> out of 800**. There was almost no signal to detect. *The null results here were short of effect
+> size, not CPU time* — and no amount of speed fixes that.
+
+**Merge gate (passed, not merged).** Paired on 1,000 real slates: max score difference 1.788e-07,
+and **1 rank inversion in 1,493,005 pairs**. That one is a genuine tie — the two scores differ by
+**4.7e-09**, below fp32 resolution — so its order is arbitrary in both implementations, not wrong in
+one. `tests/test_batched.py` gates on inversions separated by more than 1e-6, the property a
+submission actually depends on (cf. bug 6: a submission records a permutation, so only
+distinguishable pairs have a defined order).
+
+**Not merged.** 4% does not justify a CUDA dependency on the path that produces deliverables, and
+`main` must run without a GPU. Branch kept: C-2 scores the full corpus rather than an 11-item slate,
+so the ratio that makes this worthless here may reverse — **to be settled by profiling C-2, not by
+reusing this projection.** → `mistakes.md` bug 9.
 
 ## Findings
 

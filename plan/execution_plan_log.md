@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F59.**
+> **One day to the 2026-08-27 deadline. Findings F1–F61.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -727,6 +727,81 @@ position after F59 is that **this must be profiled in C-2 rather than projected*
 precisely the error this finding records, and the intuition that "the bigger dataset benefits more"
 was already wrong once here. The branch is kept as a starting point, not as a conclusion.
 → `mistakes.md` bug 9.
+
+### F60 — The EB-NeRD bottleneck is Arrow→Python conversion, not Parquet reading, so Polars cannot fix it
+F59 measured only the *scoring* stage and concluded "Polars + GPU is not helpful". **That
+conclusion overreached: it tested the GPU half and never tested the Polars half.** Measured here at
+full EB-NeRD test scale (125,541 articles, 807,677 users, 116,825,984 clicks, 13,536,710
+impressions):
+
+| Phase | sec | share of setup |
+|---|---|---|
+| articles: parquet → python objects | 5.2 | 1.9% |
+| **histories: raw pyarrow read** | **1.5** | **0.6%** |
+| **histories: arrow → python objects** | **158.6** | **58.5%** |
+| impressions: stream | 105.7 | 39.0% |
+| **SETUP TOTAL** | **271.1 (4.5 min)** | peak RSS **15.14 GB** |
+
+**Setup is ~60% of the EB-NeRD run, and history handling is ~59% of setup** — which is the part
+F59 never looked at.
+
+> [!important] The decisive split: 1.5 s vs 158.6 s
+> Reading the 1.16 GB history parquet into Arrow takes **1.5 seconds**. Turning that Arrow table
+> into 807,677 `History` objects takes **158.6 seconds — 106× longer.**
+>
+> **This is why Polars specifically will not help.** Polars replaces the *reader*, and the reader is
+> 0.6% of setup. Swapping PyArrow for Polars optimises a step that is already effectively free. The
+> cost is materialising 116.8M Python ints and `datetime` objects, and it exists because downstream
+> code iterates Python objects — not because of which library read the file.
+>
+> **The real fix is to not materialise them at all** — keep clicks in Arrow/numpy columns and index
+> them, which is precisely what `CompactHistories` (F36) already does for the worker path and why it
+> cut RSS 39% and *raised* throughput 45%. The general lesson: **naming a library is not naming a
+> bottleneck.** "Use Polars" and "stop building Python objects" sound like the same suggestion and
+> are not; only the second one addresses the 158.6 s.
+
+**Revised verdict on Part 4c.** The two halves of that proposal have opposite outcomes, and F59
+wrongly generalised from one to both:
+
+| Half | Targets | Verdict |
+|---|---|---|
+| **GPU batched scoring** | semantic scoring, ~11% of run | **Refuted** — 1.6× MIND, 1.2× EB-NeRD (F59) |
+| **Polars** | the reader, 0.6% of setup | **Refuted, but for a different reason** — right area, wrong mechanism |
+| *(unproposed)* **columnar histories** | 58.5% of setup | **The actual opportunity** — ~2.5 min/run and the 88%-of-RSS problem |
+
+*Consequence for the RAM question:* yes, this lowers peak memory — but through the columnar
+representation, not through Polars. F36 measured 15.08 GB → 9.25 GB from exactly this change on the
+worker path, and the residual it names is the 116.8M `datetime` objects the int-array change did not
+touch. Extending it to the loader is the same trick applied one level up. **Not done for C-1:** the
+truncation `t < cutoff` *is* the Q9 leakage boundary (F36's stated reason), and changing the type on
+both sides of that comparison is a correctness risk that a 2.5-minute saving does not justify one
+day from the deadline.
+
+*On GPU for this stage:* it does not apply. The 158.6 s is Python object allocation, which is
+interpreter-bound, not arithmetic — there is no kernel to launch. The 105.7 s impression stream is
+I/O-bound. Neither is work a GPU can take.
+
+### F61 — MinHash/LSH from the LMA project does not transfer: it solves a different problem
+Checked `Subjects/LMA/Projects/Individual-Small-LM/src/pipeline/common/minhash.py` (404 lines,
+MinHash + LSH, 128 permutations, 32 bands × 4 rows) for reuse here. **It should not be reused, and
+the reason is worth recording because the word "dedup" is doing double duty.**
+
+| | LMA | IRE (this assignment) |
+|---|---|---|
+| What is deduplicated | whole documents | query *terms* |
+| Scale | 2.9M docs → 4.2 trillion pairs | ~120 tokens in one query |
+| "Duplicate" means | **near**-duplicate, Jaccard ≥ 0.8 | **exact** string equality |
+| Method needed | MinHash + LSH (exact is infeasible) | `dict.fromkeys()`, O(n) |
+
+`build_query(dedup=True)` already deduplicates exactly, in one pass over ~120 items, preserving
+first-seen order. **MinHash would replace an exact O(n) operation with an approximate one that costs
+more** — it exists to avoid comparing all pairs, and there are no pairs to avoid here.
+
+*Where near-duplicate detection would genuinely apply in IRE:* the **article corpus**, not the
+query — news wires republish near-identical stories, so a slate could hold several versions of one
+event and a recall metric would count them as distinct. That is a real question and **it is
+unmeasured here**; it is a candidate-diversity concern, which is Component 2's territory. Flagged,
+not claimed.
 
 ## Findings
 

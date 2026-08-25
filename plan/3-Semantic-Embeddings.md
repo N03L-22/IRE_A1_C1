@@ -70,6 +70,21 @@ status: done
 > — the sign reverses and nothing is established. The two families are indistinguishable at n=4,000,
 > and they differ on 470/800 impressions, so this is genuine equality rather than missing power.
 >
+> **D4 (ANN) settled by sweep, and the shipped config changed (F49–F53).** Brute force stays as the
+> *exact reference* ANN is measured against; **HNSW is now the workhorse**, because on clustered
+> vectors it is 62–69× faster at 0.99+ recall. Shipped **M=64, `efSearch` derived from corpus size**
+> (128 → 256 → 512), giving **0.9947 recall at 45× exact** on 1M vectors.
+>
+> Two corrections this required, both tuning rather than limits: F31's pessimistic recall came from
+> *uniform-random* vectors (near-orthogonal, the worst case for a proximity graph), and a fixed
+> `ef=128` collapses to 0.68 recall at 1M because HNSW explores a fixed candidate count regardless
+> of corpus size.
+>
+> **D5 (normalisation) verified, not just implemented.** L2 on computed vectors (`encode.py:224`),
+> on provided vectors (`semantic.py:167`), inner-product metric, and an index-time assertion
+> (`semantic.py:190`) proven to fire on deliberately un-normalised input. The user vector is
+> normalised too, which D5 does not mention but matters equally.
+>
 > **Encoder throughput, measured on the RTX 4060:** length-sorted batching (1.80×) plus
 > pipelined tokenisation (1.27×) plus vector caching = **6,286 art/s**. Larger batches are
 > *slower* — the model is launch-latency bound, and VRAM (0.36 of 8 GB) is not the constraint.

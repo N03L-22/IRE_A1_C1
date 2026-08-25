@@ -284,15 +284,34 @@ at 15.1\,GB, of which the index was only 1.8\,GB --- the rest was 116.8M click i
 lines/s, then the merge produced \emph{zero} output for 20+ minutes with 24\,GB swapped. The same
 merge with RAM free: \textbf{7 seconds}. Scoring streams and degrades gracefully; the merge hits a
 13.3M-element set at random, where swap does not degrade --- it stalls.
-\item \textbf{ANN: the trade-off only becomes real at 10$\times$ \F{F49/F50}.} On \emph{clustered}
-vectors HNSW is 62--69$\times$ faster than exact at \textbf{0.99+ recall} --- an earlier benchmark
-using uniform-random vectors measured only 0.45--0.77 and was a synthetic-data artefact, since
-random vectors in 384 dimensions are near-orthogonal and give a proximity graph nothing to exploit.
-At 1M vectors the speed-up grows to 160$\times$ but \textbf{recall falls to 0.8332}: exact search
-becomes unusable (4.6\,s/query) exactly as the approximation starts costing 17\% of the answer.
-\textbf{That is where the pipeline breaks} --- not on memory or the model, but on the ANN index's
-recall/latency trade-off ceasing to be free. Build time also grows super-linearly, 4\,s
-$\rightarrow$ 156\,s.
+\item \textbf{ANN: the defaults break at 10$\times$, the method does not \F{F49--F53}.} Two
+corrections got us here, and both were tuning rather than limits. First, an early benchmark on
+\emph{uniform-random} vectors measured HNSW losing 11--66\% of the exact answer; random vectors in
+384 dimensions are near-orthogonal, the one input a proximity graph cannot exploit. On
+\emph{clustered} vectors --- the structure real embeddings have --- the loss is 0.03--1.25\%.
+Second, at 1M vectors a fixed \texttt{efSearch}=128 does collapse to \textbf{0.68} recall, because
+HNSW explores a fixed candidate count regardless of corpus size, so the \emph{fraction} inspected
+shrinks as it grows.
+
+Sweeping both dials at 1M (exact baseline 22.8\,ms/query):
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+$M$ & \texttt{ef} & recall & ms/query & vs exact & graph \\
+\midrule
+16 & 1024 & 0.9588 & 0.34 & 68$\times$ & 0.13 GB \\
+32 & 512 & 0.9793 & 0.34 & 67$\times$ & 0.26 GB \\
+\textbf{64} & \textbf{512} & \textbf{0.9947} & 0.51 & \textbf{45$\times$} & 0.52 GB \\
+64 & 1024 & 0.9990 & 0.58 & 39$\times$ & 0.52 GB \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+At \emph{fixed latency} a denser graph always wins --- more links means fewer dead ends, so the walk
+reaches the same recall exploring fewer candidates. \textbf{Shipped $M{=}64$ with \texttt{ef} derived
+from corpus size: 99.5\% of the exact answer, 45$\times$ faster.} Index memory is not the binding
+constraint (0.52 GB of graph against 1.54 GB of vectors); build time is a 183\,s one-off.
 \end{itemize}
 
 \section{Leaderboards (Q5) and limitations}

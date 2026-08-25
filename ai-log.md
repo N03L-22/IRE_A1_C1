@@ -487,3 +487,7 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 02:42 · `0df5ffb1`
 
 > after this rerun MIND with all the changes we have made so far. based on all of the recent findings, fine tune and provide another submission. check for ebnerd also. can we do anything at that end also?  also what were the results from Q9? also update the plan doc also with the recent fine tunings and changes.
+
+### 2026-08-26 03:06 · `0df5ffb1`
+
+> we can try the ebnard fusion with 2 workers later. but the lexical bein g affected by 5 or 6 factors seem very simple. check if there was any other options or approachs for lexical that would improve or for semantic that would improve the MIND? and honestly semantic is supposed to be a better version that lexical and should take almost same time with the better CPU/GPU parallel computes

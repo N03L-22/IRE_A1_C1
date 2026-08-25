@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F55.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F57.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -573,6 +573,45 @@ Audited the recent findings against what the submission path actually consumes:
 
 `DEFAULT_TRUNCATE_DIM = 256` is now applied at index time in `SemanticRetriever`, so both the
 harness and the submission path use it. Set `truncate_dim=None` to keep the encoder's native width.
+
+### F56 — Semantic scoring is only 17% slower than lexical, not 2.5x
+Measured on the submission path (`score_subset`, 300 real MIND slates), which is the only timing
+that affects a submission:
+
+| Retriever | ms/slate | slates/s |
+|---|---|---|
+| BM25 | 0.531 | 1,883 |
+| Semantic (MiniLM 256-d) | **0.623** | 1,605 |
+
+**A 17% gap, not the large one implied earlier.** Both reduce to a small arithmetic op over ~37
+candidates — a sparse dot product for BM25, a dense one for the embeddings — and at that size the
+dense operation is barely more expensive.
+
+*What is actually 2.5x slower is **fusion*** (1,042/s against BM25's 2,540/s in the real submission
+runs), because it evaluates **both** retrievers per slate and then merges ranks. That cost is
+inherent to fusion, not to semantic retrieval.
+
+*Correction:* earlier commentary attributed fusion's runtime to the semantic side being slow. It is
+not; the semantic retriever is competitive with BM25 per slate, and would run at essentially the
+same speed as a standalone submission.
+
+### F57 — What BM25 alternatives remain untested, and which is worth it
+The brief names BM25 and TF-IDF on the lexical axis. Both are built and compared (U4: 0.0063 vs
+0.0075, indistinguishable). The wider lexical family:
+
+| Approach | Status | Assessment |
+|---|---|---|
+| BM25 | ✅ shipped | the baseline |
+| TF-IDF | ✅ tested (U4) | indistinguishable from BM25 here |
+| **BM25F** (per-field weights for title vs abstract) | ❌ untested | **The one real gap.** F28 measured abstracts as 75% of the index buying +0.011 (inside the CI), so a title-weighted variant is a genuine hypothesis rather than a guess |
+| Query expansion / RM3 | ❌ untested | The classic BM25 upgrade, but adds a pseudo-relevance-feedback round per query |
+| SPLADE / learned sparse | ❌ | Requires training — outside Q3's "compute or load" |
+| Per-language stemming | rejected (D3) | Different stemmers per dataset would confound the cross-dataset comparison Q3.5 asks for |
+
+*Decision:* **not changing BM25.** The brief names it explicitly, F23 measured its whole parameter
+space as worth ~0.01, and the measured lever on this data is the candidate *pool* (F16/F41: 33x),
+not the weighting scheme. BM25F is recorded as the strongest untested lexical idea, with the
+evidence that motivates it, rather than being tried at the deadline.
 
 ## Findings
 

@@ -20,6 +20,21 @@ status: done
 > a ±0.030 CI** — not measurably better than titles alone. Kept because Q2.1 is binding;
 > reported as the null result it is.
 >
+> **D1 answered: we did both.** `bm25s` is the workhorse for every reported number and submission;
+> `ReferenceBM25` is ~50 lines of hand-written Robertson BM25 (IDF, k1 saturation, b length
+> normalisation) used as the correctness check. `test_reference_agrees_with_library` pins them
+> together. That test earned its place twice — it revealed the two disagree on *absolute* scores
+> (Lucene vs Robertson IDF) while ranking identically, and it later caught that `score_subset`'s
+> arithmetic could not be made to match `bm25s` exactly (off by up to 106), which is why that path
+> is verified on **ranking agreement, 0 discordant pairs in 780**, and is barred from reported
+> metrics.
+>
+> **Alternatives still untested (F57):** BM25F with per-field weights is the strongest remaining
+> lexical idea — F28 showed abstracts are 75% of the index for an effect inside the CI, so
+> down-weighting them is a motivated hypothesis. Query expansion/RM3 is the other classic. Neither
+> is being tried: the brief names BM25, F23 measured its whole parameter space at ~0.01, and the
+> lever on this data is the candidate pool (33x), not the weighting scheme.
+>
 > **Added since planning:** `score_subset()` for the submission path — scores a slate directly
 > instead of retrieving top-K over the corpus and discarding 99%. **16× faster** (162 → 2,570
 > impressions/s), ranking-equivalent (0 discordant pairs), never used for a reported metric (F32).

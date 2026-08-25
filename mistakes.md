@@ -280,6 +280,43 @@ nobody asked.**
 
 ---
 
+## 10. Dismissing a tool by assuming which step it optimises
+
+**Where:** F60 in the execution log — "Polars replaces the reader, and the reader is 0.6% of setup,
+so Polars cannot help"
+
+**What it did.** After F59 profiled the run and found history loading was 58.5% of setup, I ruled
+Polars out with a specific, confident-sounding argument: it optimises Parquet reading, reading is
+1.5 s of 271 s, therefore it is irrelevant. Both halves are wrong.
+
+**The measurement.** Same file, same machine:
+
+| Step | pyarrow | polars |
+|---|---|---|
+| Read → columnar | **1.66 s** | 3.06 s — polars is **slower** |
+| Export → Python objects | 28.43 s | **3.00 s — 9.5× faster** |
+
+**Polars' entire advantage is in the export path — the step I asserted it could not touch** — and it
+is *worse* at the step I assumed was its whole purpose. Staying columnar
+(`explode().to_numpy()`) does better still: 116.8M clicks in **0.35 s and 0.47 GB**, against 158.6 s
+and ~13 GB as Python objects.
+
+**What caught it.** Being asked "if arrow to python is taking time, will polar take similar to and
+fro times?" — a question about the specific step, which is exactly what I had not measured. The
+argument was structurally sound and rested on an unchecked premise about what the library does.
+
+**Why this one is worse than bug 9.** It is the *same mistake in the very next finding*. Bug 9 was
+projecting a speedup without profiling the whole; F60 then dismissed a tool without profiling the
+part. Both times I produced a precise number (1,200×; 0.6%) that made a guess look like a
+measurement.
+
+**Transferable lesson:** *a percentage attached to the wrong step is more misleading than no
+number at all.* "The reader is 0.6% of setup" was true and irrelevant — Polars was never mainly a
+reader optimisation. **Before claiming a tool will or will not help, measure the specific step you
+believe it changes**, not the step its name suggests.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |
@@ -293,8 +330,9 @@ nobody asked.**
 | 7. Random-vector benchmark | No | Questioning the input before publishing |
 | 8. Under-powered sample | No | An external number disagreeing |
 | 9. 1,200× speedup projection | No | Profiling end-to-end instead of per-stage |
+| 10. Ruling out Polars by assumption | No | Measuring the step, after being asked about it |
 
-**Eight of nine did not crash.** The one that did — the filename — was the
+**Nine of ten did not crash.** The one that did — the filename — was the
 cheapest to fix and the least interesting.
 
 The working method, stated as a rule: **before running anything, write down

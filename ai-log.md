@@ -826,3 +826,7 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 04:08 · `0df5ffb1`
 
 > lets do the polar with GPU on the branch now
+
+### 2026-08-26 05:02 · `0df5ffb1`
+
+> can we still use polar and gpu and find a work around for q9?

@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F53.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F55.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -533,6 +533,46 @@ memory is not the binding constraint here, which is why the densest graph tested
 > configuration retrieves 99.5% of the exact answer 45× faster.** The honest 10× statement is:
 > *the defaults break, the method does not* — and both dials that fix them were found by sweeping,
 > not by reasoning.
+
+### F54 — Where each index actually runs, and why HNSW never reaches a submission
+Worth stating explicitly, because it was easy to get wrong from the inside:
+
+| Stage | Index used | Why |
+|---|---|---|
+| Q3.2 requirement | **HNSW implemented** (`IndexHNSWFlat`, M=64, ef by corpus size) | Q3.2 asks for an ANN index; brute force alone would leave none |
+| Q4 harness ablation | **both** — HNSW at ef=64/128/256 *and* exact, side by side | F43's ANN-vs-exact comparison |
+| Q3/Q4 default (`auto`) | brute force | All four corpora (20,738 / 65,238 / 120,961 / 125,541) are **below** `BRUTE_FORCE_LIMIT = 200,000` |
+| **Q5 submissions** | **neither** | `score_subset()` scores the ~37 slate candidates directly |
+
+**Two independent reasons HNSW cannot change a submitted file.** First, every corpus we have is under
+the auto threshold. Second, and more fundamental: the submission format is a *permutation of the
+slate*, so only relative order among the candidates shown matters. An article's rank among 120,961
+adds nothing to its rank among 37 — which is why `score_subset()` is 16× faster (F32) and why the
+index is bypassed entirely.
+
+*Consequence for how the sweeps should be read:* **F49–F53 are Q6 scale analysis, not tuning.** They
+corrected a wrong published number (F31's 11–66% recall loss was a random-vector artefact) and
+turned the Q6 answer from *"the pipeline breaks at 10×"* into *"the defaults break, the method does
+not"*. They moved no leaderboard score, and the log should not imply otherwise.
+
+> [!warning] The cost, recorded honestly
+> The M × efSearch sweep at 1M vectors took ~25 minutes of compute for a configuration that touches
+> no corpus we have. The right sequence was to establish *"this cannot affect a submission"* first
+> and then decide how much evidence Q6 needed — not to measure first and notice afterwards.
+
+### F55 — Only one recent finding changes a submitted file: F47's 256-d truncation
+Audited the recent findings against what the submission path actually consumes:
+
+| Finding | Changes a submission? |
+|---|---|
+| **F47** 256-d beats 384-d (+0.0175 paired, 34% less memory) | **Yes** — the semantic vectors are truncated before scoring |
+| F51 `last_n` peaks at 20 | No — the semantic side already used 20, and it was not significant |
+| F52/F53 `efSearch` / `M` | No — see F54 |
+| F48 multi-query rejected | No — not shipped |
+| F42 fusion > BM25 on the leaderboard | Already applied (submission 901779) |
+
+`DEFAULT_TRUNCATE_DIM = 256` is now applied at index time in `SemanticRetriever`, so both the
+harness and the submission path use it. Set `truncate_dim=None` to keep the encoder's native width.
 
 ## Findings
 

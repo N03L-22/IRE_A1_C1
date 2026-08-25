@@ -84,6 +84,18 @@ EF_SEARCH_LARGE = 512
 #: latency; drop to M=32 only if index memory becomes the constraint.
 DEFAULT_M = 64
 
+#: Truncate embeddings to this width before indexing (F47). Measured on
+#: EB-NeRD inside the 24h window, truncating the cached 384-d MiniLM vectors:
+#:
+#:   384d  31.9 MB  recall@50 0.2325   --
+#:   256d  21.2 MB  recall@50 0.2500   +0.0175 [+0.0025, +0.0338] SIGNIFICANT
+#:   128d  10.6 MB  recall@50 0.2437   no worse than full width
+#:    64d   5.3 MB  recall@50 0.2175   degrades
+#:
+#: 256 is the only setting measured as *better* than full width, and it is a
+#: third cheaper. Set None to keep the encoder's native width.
+DEFAULT_TRUNCATE_DIM = 256
+
 
 def default_ef_search(n_vectors: int) -> int:
     """Pick `efSearch` from the corpus size (F52).
@@ -187,6 +199,7 @@ class SemanticRetriever:
         batch_size: int = 128,
         ef_search: int | None = None,
         m: int = DEFAULT_M,
+        truncate_dim: int | None = DEFAULT_TRUNCATE_DIM,
         vectors: np.ndarray | None = None,
         vector_ids: list[str] | None = None,
     ) -> None:
@@ -197,6 +210,7 @@ class SemanticRetriever:
         self.batch_size = batch_size
         #: None means "derive from corpus size at index time" (F52).
         self.m = m
+        self.truncate_dim = truncate_dim
         #: None means "derive from corpus size at index time" (F52).
         self.ef_search = ef_search
         self.name = f"semantic({model_key},tau={tau:g},n={last_n})"
@@ -229,6 +243,18 @@ class SemanticRetriever:
             self._vecs, self.encode_stats = encode_cached(
                 texts, self._ids, model_key=self.model_key, batch_size=self.batch_size
             )
+
+        # Truncate before indexing (F47). Measured on EB-NeRD inside the 24h
+        # window: 256-d scored +0.0175 recall@50 over full width with the
+        # paired CI excluding zero, at 34% less memory. The tail dimensions of
+        # a non-Matryoshka embedding carry mostly noise for this task, so
+        # dropping them removes variance without removing signal.
+        if self.truncate_dim and self._vecs.shape[1] > self.truncate_dim:
+            self._vecs = l2_normalise(
+                self._vecs[:, : self.truncate_dim].astype(np.float32).copy()
+            )
+            log.info("%s: truncated %d -> %dd (F47)", self.name,
+                     self.truncate_dim, self._vecs.shape[1])
 
         self._by_id = {aid: i for i, aid in enumerate(self._ids)}
         # The harness identifies history by retrieval text, so map that too.

@@ -85,6 +85,16 @@ status: done
 > (`semantic.py:190`) proven to fire on deliberately un-normalised input. The user vector is
 > normalised too, which D5 does not mention but matters equally.
 >
+> **Shipped semantic config, as tuned:** MiniLM, **truncated to 256-d** (F47), `last_n=20`,
+> conditional pooling at τ=0.35, brute-force exact index at our corpus sizes.
+>
+> **Where HNSW actually runs (F54).** Q3.2 is satisfied — `IndexHNSWFlat` with M=64 and `ef` derived
+> from corpus size is implemented, and the Q4 harness scores it *against* exact search. But
+> `auto` mode picks brute force for every corpus we have (all under 200K), and the **submission path
+> bypasses the index entirely** via `score_subset()`, because a submission is a permutation of the
+> ~37-candidate slate and an article's rank among 120,961 says nothing extra about its rank among
+> 37. So F49–F53 are Q6 scale evidence, not submission tuning.
+>
 > **Encoder throughput, measured on the RTX 4060:** length-sorted batching (1.80×) plus
 > pipelined tokenisation (1.27×) plus vector caching = **6,286 art/s**. Larger batches are
 > *slower* — the model is launch-latency bound, and VRAM (0.36 of 8 GB) is not the constraint.

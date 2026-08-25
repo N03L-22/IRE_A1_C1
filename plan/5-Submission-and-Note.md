@@ -25,6 +25,19 @@ status: in-progress
 > verified against both upstream sources. Submission filenames are now
 > `{dataset}_{retriever}_{paramhash}_i{n}` so no run can overwrite another.
 >
+> **Q9 results.** *(a)* The leakage test suite passes — **15 tests**, including mutation tests that
+> inject a post-boundary click and confirm the checker fails. Verifiable on EB-NeRD only; MIND's
+> history is untimestamped, and the store records `history_boundary_verifiable: false` rather than
+> implying otherwise. *(b)* With/without serving-unavailable features: **the gap is ~0.002**
+> (MIND recall@100, popularity 0.0688 → 0.0706 without the cold-start fallback). Our retrievers
+> never touch the post-click fields, so the only serving-unavailable feature in play is the
+> fallback, and it fires too rarely to matter. **EB-NeRD has no `no_fallback` row at all** — F9
+> established it has no zero-history users, so the fallback never fires there. That is a data
+> property, not a gap.
+>
+> **Tuned resubmission.** Only F47 (256-d truncation) changes a submitted file; F51/F52/F53 do not
+> (F54, F55). MIND regenerated as fusion at 256-d.
+>
 > **Cohort context:** median AUC 0.6121 across 50 classmate submissions; we are 0.055 below it.
 > The gap is not parameter tuning (measured at ~0.01) — it is the missing popularity signal and
 > the semantic/fusion rows, which are built but not yet scored.

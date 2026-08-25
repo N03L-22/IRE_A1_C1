@@ -224,27 +224,67 @@ class EbnerdReader:
                 )
 
     def impressions(self, split: str) -> Iterator[Impression]:
+        """Stream impressions, tolerating the unlabelled test schema.
+
+        The test split has **14 columns against train's 17** (F14): the
+        organisers removed ``article_ids_clicked`` and ``article_id`` (the
+        labels) and ``next_read_time`` / ``next_scroll_percentage`` (future
+        information). Asking for a column that is not there is a hard
+        ParquetFile error, so the column list is intersected with the actual
+        schema rather than hardcoded.
+
+        An impression with no ``clicked`` is exactly what ``is_labelled``
+        reports as False -- the harness skips those, and the submission path
+        does not need them.
+        """
         path = self._split_dir(split) / "behaviors.parquet"
-        cols = [
-            "impression_id",
-            "user_id",
-            "impression_time",
-            "article_ids_inview",
-            "article_ids_clicked",
-            "session_id",
-        ]
         pf = pq.ParquetFile(path)
+        cols = self._impression_columns(pf)
         for batch in pf.iter_batches(columns=cols, batch_size=50_000):
-            d = batch.to_pydict()
-            for i in range(batch.num_rows):
-                yield Impression(
-                    impression_id=str(d["impression_id"][i]),
-                    user_id=str(d["user_id"][i]),
-                    time=d["impression_time"][i],
-                    candidates=[str(a) for a in (d["article_ids_inview"][i] or [])],
-                    clicked=[str(a) for a in (d["article_ids_clicked"][i] or [])],
-                    session_id=str(d["session_id"][i]),
-                )
+            yield from self._impressions_from_batch(batch)
+
+    def _impression_columns(self, pf) -> list[str]:
+        """Columns to read, intersected with what the file actually has."""
+        available = set(pf.schema_arrow.names)
+        required = ["impression_id", "user_id", "impression_time", "article_ids_inview"]
+        missing = [c for c in required if c not in available]
+        if missing:
+            raise KeyError(f"behaviors.parquet missing required columns: {missing}")
+        return required + [
+            c for c in ("article_ids_clicked", "session_id") if c in available
+        ]
+
+    def _impressions_from_batch(self, batch) -> Iterator[Impression]:
+        d = batch.to_pydict()
+        clicked_col = d.get("article_ids_clicked")
+        session_col = d.get("session_id")
+        for i in range(batch.num_rows):
+            yield Impression(
+                impression_id=str(d["impression_id"][i]),
+                user_id=str(d["user_id"][i]),
+                time=d["impression_time"][i],
+                candidates=[str(a) for a in (d["article_ids_inview"][i] or [])],
+                clicked=(
+                    [str(a) for a in (clicked_col[i] or [])]
+                    if clicked_col is not None
+                    else []
+                ),
+                session_id=str(session_col[i]) if session_col is not None else None,
+            )
+
+    def impressions_row_group(self, split: str, rg_index: int) -> Iterator[Impression]:
+        """Impressions from ONE parquet row group.
+
+        Row groups are the natural unit of parallelism for the submission
+        path: they are independent, already materialised as contiguous byte
+        ranges, and there are ~51 of them in EB-NeRD's test set. Each worker
+        reads its own group and writes its own shard, so nothing is shared
+        and nothing is pickled between processes.
+        """
+        path = self._split_dir(split) / "behaviors.parquet"
+        pf = pq.ParquetFile(path)
+        cols = self._impression_columns(pf)
+        yield from self._impressions_from_batch(pf.read_row_group(rg_index, columns=cols))
 
     def histories(self, split: str) -> Iterator[History]:
         """One record per user, with timestamps -- so truncation is provable."""

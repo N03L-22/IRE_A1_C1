@@ -203,3 +203,11 @@ real verification loop is the point, not a transcript.
 
 > use 7 days for the large and 2 for small? should we compare our xlm-Reoberta 768. avoid session context since on avg its low. mention the eval;uation parameters in the foundations with detailed simple explanations built up to strong foundations. the need, why, and how. you can remove the section D since i allow for this time and also since we have made a file for decisions which must also contain the section D contents. based on the current selections, create a submissions for both. lets stcik to the hybrid official splits for the leadeerboard setup. lets stcik to per split corpus for minds train and dev? ignore Q7.4 for now.
 > and lets move to phase 3 once done.
+
+### 2026-08-25 21:30 · `0df5ffb1`
+
+> what should i submit? the txt or zip?
+
+### 2026-08-25 21:32 · `0df5ffb1`
+
+> is the ebnerd one done?

@@ -191,3 +191,44 @@ class TestMindIntegration:
         assert len(imps) == 200
         assert all(i.candidates for i in imps)
         assert all(set(i.clicked) <= set(i.candidates) for i in imps)
+
+
+HAS_EBNERD_TEST = (Path("data/work/ebnerd/testset/test/behaviors.parquet")).exists()
+
+
+@pytest.mark.skipif(not HAS_EBNERD_TEST, reason="run `make data-testset` first")
+def test_ebnerd_reader_handles_the_unlabelled_test_schema() -> None:
+    """The test split has 14 columns; train has 17 (F14).
+
+    `article_ids_clicked` and `article_id` (the labels) and `next_read_time` /
+    `next_scroll_percentage` (future information) are removed by the
+    organisers. A hardcoded column list raises KeyError on the parquet read --
+    which is exactly how the first EB-NeRD submission run died, 25 seconds in
+    and after a 5-second article load, so the failure was easy to miss.
+
+    An unlabelled impression is a legitimate object here, not an error: it
+    reports is_labelled == False, the harness skips it, and the submission
+    path does not need a label.
+    """
+    reader = EbnerdReader(WORK / "ebnerd" / "testset")
+
+    seen = 0
+    for imp in reader.impressions("test"):
+        assert imp.candidates, "test impression with no slate to rank"
+        assert imp.clicked == [], "test split must not carry labels"
+        assert imp.is_labelled is False
+        seen += 1
+        if seen >= 50:
+            break
+    assert seen == 50, "reader yielded nothing from the test split"
+
+
+@pytest.mark.skipif(not HAS_EBNERD_TEST, reason="run `make data-testset` first")
+def test_ebnerd_reader_still_reads_labels_where_they_exist() -> None:
+    """The schema-tolerant path must not silently drop labels on train/val."""
+    if not Path("data/work/ebnerd/small/train/behaviors.parquet").exists():
+        pytest.skip("small tier not extracted")
+    reader = EbnerdReader(WORK / "ebnerd" / "small")
+    labelled = sum(1 for i, imp in enumerate(reader.impressions("train"))
+                   if imp.is_labelled or i > 200)
+    assert labelled > 0, "labels lost on a split that has them"

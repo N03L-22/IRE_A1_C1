@@ -31,7 +31,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 >
 > Built store: 272 MB parquet, `data/store/{mind,ebnerd}/` + a manifest per dataset.
 >
-> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F31.
+> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F37.
 >
 > **Large tiers measured (F13–F15) but still deliberately idle.** The headline numbers stay on small;
 > what the measurement bought is a concrete Q6 scale answer and a cheaper baseline, not a change of
@@ -701,6 +701,134 @@ never contribute an offline metric (F14).
 > corpus would leave most test candidates unscored, so they would sink to the bottom of every slate —
 > the same recall-ceiling trap as F17 and D-CORPUS, in the submission path rather than the eval path.
 > `codabench.py` therefore requests `articles(splits=(test_split,))`.
+
+### F34 — First leaderboard score: MIND AUC 0.5568, and it disagrees with our offline number
+Submitted BM25 (`k1=1.6, b=0.75, n=5`) to the MIND Codabench leaderboard, submission 901650.
+
+| Metric | Leaderboard (n = 2,370,727) | Our offline val (n = 800) |
+|---|---|---|
+| **AUC** | **0.5568** | 0.4981 [0.4776, 0.5190] |
+| MRR | 0.2646 | 0.2467 [0.2278, 0.2680] |
+| nDCG@5 | 0.2778 | 0.2172 [0.1959, 0.2392] |
+| nDCG@10 | 0.3331 | 0.2712 [0.2505, 0.2933] |
+
+Rank 75. Peers visible on the same page span AUC 0.5571–0.6544.
+
+**The disagreement is the finding.** Our offline harness said BM25's AUC was indistinguishable from
+chance on MIND; the leaderboard says it is clearly above it. Three candidate explanations, in
+descending order of likelihood:
+
+1. **Sample size.** 800 impressions against 2.37M. Our CI half-width was ±0.021, and the gap is
+   0.059 — larger than the CI, so sampling noise alone does not explain it, but a 2,963× larger
+   sample is far more trustworthy.
+2. **Different data.** Our val is one day carved from MIND-small train (Nov 14); the leaderboard is
+   the large test week (Nov 16–22) with a different corpus (120,961 vs 65,238 articles) and
+   different users.
+3. **Different slate composition.** The large test set averages 39.3 candidates per impression
+   against small's 37.2, and slate size directly changes AUC's denominator.
+
+*Consequence:* **the offline harness is under-powered at n = 800 and should not be the sole basis
+for a retriever decision.** Raise the evaluated slice before comparing lexical against semantic —
+otherwise Q3.5's headline comparison inherits the same weakness. This is the most actionable
+methodological finding so far.
+
+*Also settled:* the submission path is validated end to end — format, rank alignment, memory,
+scorer compatibility — by a real score rather than by our own assertions.
+
+### F35 — The submission failed once on a filename, not on content
+First upload was rejected:
+
+```
+FileNotFoundError: '/app/input/res/prediction.txt'
+```
+
+The scorer opens that path literally; our archive contained `mind_prediction.txt`. **The 2,370,727
+predictions were correct** — only the member name inside the zip was wrong. Repacking with
+`arcname="prediction.txt"` scored on the next attempt.
+
+*Consequence:* `SUBMISSION_MEMBER = "prediction.txt"` is now a named constant, and
+`tests/test_submit.py` asserts both the constant and the built artefact. A wrong filename costs a
+submission from the daily quota of 10 plus ~15 minutes of regeneration, which is a disproportionate
+price for a string.
+
+### F36 — Worker-local int arrays cut memory 39% and *raised* throughput 45%
+The parallel submission path was unusable at EB-NeRD test scale: one worker peaked at **15.08 GB**
+against 20.1 GB free, so exactly one fitted. Measured breakdown:
+
+| Component | Cumulative RSS |
+|---|---|
+| Articles (125,541) | 1.34 GB |
+| + BM25 index | 1.82 GB |
+| + histories (807,677 users, **116,825,984 clicks**) | **15.08 GB** |
+
+**88% of the footprint was click ids held as Python `str`** — roughly 57 bytes of interpreter
+overhead apiece for a value parquet stores as int32.
+
+`CompactHistories` stores them as `array('i')` indices into a shared article-text table, built
+inside `_init_worker` only:
+
+| | Before | After |
+|---|---|---|
+| Per-worker RSS | 15.08 GB | **9.25 GB** (−39%) |
+| Throughput | ~2,540/s | **3,681/s** (+45%) |
+| Serial estimate | ~90 min | **~61 min** |
+| Workers fitting in 23.1 GB | 1 | **2** (→ ~30 min) |
+
+The speed-up was not the goal and is worth noting: indexing a contiguous list by integer beats
+hashing strings through a dict.
+
+> [!warning] The saving is smaller than predicted, and the reason matters
+> ~2.5 GB was projected; 9.25 GB was measured. The residual is the per-user
+> `impression_time_fixed` lists — 116.8M Python `datetime` objects, which the int-array change did
+> not touch. Converting those to epoch ints would likely reach the original projection, but it was
+> not done: the truncation comparison `t < cutoff` is the leakage boundary, and changing the type
+> on both sides of that comparison is a bigger risk than the remaining GB is worth.
+
+**Why worker-local rather than a schema change.** `History.clicked_ids` is also read by
+`src/eval/harness.py` and by `tests/test_no_leakage.py` — `History.before()` *is* the Q9 boundary.
+Changing its element type would put a memory optimisation on Q9's correctness surface for no
+benefit, since only the submission path is memory-bound. Here the ids never escape the loop.
+
+**The duplicated truncation is pinned to the original.**
+`test_submit.py::test_compact_histories_match_history_before` asserts `texts_before()` agrees with
+`History.before()` across six cutoffs, plus the no-timestamp (MIND) case and the
+click-outside-corpus case. Without that test this optimisation would not be defensible.
+
+### F37 — XLM-RoBERTa fails the Danish probe outright: it cannot separate related from unrelated
+The anisotropy risk named in D-ENC before any code was written is **confirmed, and it is severe**.
+
+`danish_probe()` embeds 5 obviously-related Danish headline pairs and 5 obviously-unrelated ones,
+then compares mean cosine similarity:
+
+| Encoder | Related | Unrelated | Margin | Verdict |
+|---|---|---|---|---|
+| `xlm-roberta-base` (768-d) | **0.9972** | **0.9954** | **+0.0018** | **OVERLAPS** |
+
+Every pair scores ~0.996 regardless of content. "Brøndby beat FCK" and "a new apple cake recipe"
+are as similar to each other as two reports of the same football match. **The representations are
+collapsed into a cone so narrow that the encoder carries no usable retrieval geometry for Danish.**
+
+*Why this matters more than a bad number:* a retriever built on these vectors would return
+effectively arbitrary articles **while producing perfectly plausible metrics**. There would be no
+crash, no warning, and the natural misreading is "semantic retrieval does not work on news" rather
+than "the encoder was never trained to make cosine similarity mean anything". This is precisely the
+silent failure the probe exists to catch, and it justifies gating Q3 on it.
+
+*What it does not mean:* XLM-R is not a bad model — it is a masked-language model, trained to
+predict hidden tokens, not to place similar texts near each other. Mean-pooling and L2-normalising
+(both applied) mitigate but do not fix that; the geometry is absent, not merely mis-scaled.
+
+**Consequence for D-ENC.** The brief names BERT and XLM-RoBERTa, so `xlm-roberta-base` remains the
+brief-sanctioned primary *and is now reported as a measured failure* rather than an assumption —
+which is a stronger design-note paragraph than quietly picking a different model. The
+similarity-trained MiniLM row, kept in the ladder as a control precisely for this, becomes the
+working semantic retriever if it passes the same probe.
+
+> [!important] This turns a design disagreement into a measured finding
+> The plan (D2) argued from theory that MLM-trained encoders would underperform for retrieval and
+> chose SBERT; the user chose XLM-R because the brief names it. **Both were right to hold their
+> position, and the probe settles it with a number.** Report both rows: it is the clearest available
+> demonstration of *why* an encoder's training objective matters more than its size or dimension.
 
 ### 2026-08-18 — Phase 1 steps 3–5 built and run
 - `src/data/clean.py` (unify + drive), `src/data/split.py` (temporal split, truncation, leakage

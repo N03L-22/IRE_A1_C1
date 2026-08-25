@@ -270,3 +270,76 @@ def test_head_tail_splits_on_train_popularity() -> None:
     assert 0 in slices["head"].members
     assert 1 in slices["tail"].members
     assert 2 in slices["tail"].members, "unseen article belongs in the tail"
+
+
+# --------------------------------------------------------------------------
+# Fusion (Q3.5)
+# --------------------------------------------------------------------------
+
+
+def test_rrf_promotes_documents_both_retrievers_like() -> None:
+    """A doc ranked mid-table by both should beat one ranked top by only one.
+
+    That is the entire premise of fusion: agreement is evidence. If this
+    property does not hold, the fusion is just an expensive alias for its
+    strongest component.
+    """
+    from src.retrieval.fusion import RRFusion
+
+    class Fake:
+        def __init__(self, name, order):
+            self.name = name
+            self.order = order
+
+        def index(self, articles):
+            pass
+
+        def retrieve(self, history_text, k, at_time=None):
+            return [(a, 1.0 / (i + 1)) for i, a in enumerate(self.order[:k])]
+
+    # "both" is 3rd and 3rd; "onlyA" is 1st then absent.
+    a = Fake("a", ["onlyA", "x", "both", "y", "z"])
+    b = Fake("b", ["onlyB", "p", "both", "q", "r"])
+
+    fused = RRFusion([a, b])
+    ranked = [aid for aid, _ in fused.retrieve(["q"], 5)]
+    assert ranked[0] == "both", f"agreement not rewarded: {ranked}"
+
+
+def test_rrf_is_deterministic() -> None:
+    """Two runs must produce identical files, so ties break on id."""
+    from src.retrieval.fusion import RRFusion
+
+    class Fake:
+        name = "f"
+
+        def index(self, articles):
+            pass
+
+        def retrieve(self, history_text, k, at_time=None):
+            return [("a", 1.0), ("b", 1.0)]
+
+    fused = RRFusion([Fake(), Fake()])
+    assert fused.retrieve(["q"], 2) == fused.retrieve(["q"], 2)
+
+
+def test_popularity_prior_blends_without_erasing_the_retriever() -> None:
+    """alpha=0 must be the bare retriever; alpha=1 must be pure popularity."""
+    from src.retrieval.fusion import PopularityPrior
+
+    class Fake:
+        name = "inner"
+
+        def index(self, articles):
+            pass
+
+        def retrieve(self, history_text, k, at_time=None):
+            return [("r1", 5.0), ("r2", 4.0)]
+
+    pop = {"p1": 0.9, "p2": 0.5}
+
+    only_retriever = PopularityPrior(Fake(), pop, alpha=0.0)
+    assert only_retriever.retrieve(["q"], 1)[0][0] == "r1"
+
+    only_popular = PopularityPrior(Fake(), pop, alpha=1.0)
+    assert only_popular.retrieve(["q"], 1)[0][0] == "p1"

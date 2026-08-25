@@ -62,3 +62,81 @@ def test_built_mind_archive_has_the_right_member() -> None:
     with zipfile.ZipFile("submissions/mind_prediction.zip") as zf:
         names = zf.namelist()
     assert names == [SUBMISSION_MEMBER], f"archive contains {names}"
+
+
+# ---------------------------------------------------------------------------
+# CompactHistories -- the memory optimisation that reimplements truncation.
+#
+# These are the tests that make the optimisation defensible. It duplicates the
+# `< cutoff` logic of History.before(), which IS the Q9 leakage boundary, so
+# the duplicate is pinned to the original rather than trusted.
+# ---------------------------------------------------------------------------
+
+from datetime import datetime, timedelta
+
+from src.data.schema import Article, History
+from src.submit.codabench import CompactHistories
+
+
+def _texts_by_id(articles: list[Article]) -> dict[str, str]:
+    return {a.article_id: a.retrieval_text for a in articles}
+
+
+def test_compact_histories_match_history_before() -> None:
+    """The duplicated truncation must agree with the original, exactly.
+
+    If these two ever disagree, the submission path is applying a different
+    leakage boundary from the one the harness and test_no_leakage.py verify --
+    silently, and only on the file that gets uploaded.
+    """
+    base = datetime(2023, 5, 20, 12, 0, 0)
+    articles = [Article(article_id=f"A{i}", title=f"title {i}") for i in range(10)]
+    lookup = _texts_by_id(articles)
+
+    hist = History(
+        user_id="u1",
+        clicked_ids=[f"A{i}" for i in range(10)],
+        times=[base + timedelta(hours=i) for i in range(10)],
+    )
+    compact = CompactHistories([hist], lookup)
+
+    for hours in (0, 1, 5, 9, 10, 20):
+        cutoff = base + timedelta(hours=hours)
+        expected = [lookup[a] for a in hist.before(cutoff) if a in lookup]
+        assert compact.texts_before("u1", cutoff) == expected, (
+            f"truncation diverged at cutoff +{hours}h"
+        )
+
+
+def test_compact_histories_without_timestamps_return_everything() -> None:
+    """MIND has no click timestamps (F1); before() returns all, so must this."""
+    articles = [Article(article_id=f"A{i}", title=f"t{i}") for i in range(4)]
+    lookup = _texts_by_id(articles)
+    hist = History(user_id="u1", clicked_ids=["A0", "A1", "A2"], times=None)
+
+    compact = CompactHistories([hist], lookup)
+    got = compact.texts_before("u1", datetime(2019, 11, 15))
+    assert got == [lookup[a] for a in hist.before(datetime(2019, 11, 15))]
+    assert len(got) == 3
+
+
+def test_compact_histories_drop_ids_absent_from_the_corpus() -> None:
+    """A click on an article outside the index contributes no text.
+
+    The original path filtered with `if a in articles` after truncating; the
+    compact path filters at build time. Same result, and the user must not
+    vanish entirely just because one click is unknown.
+    """
+    articles = [Article(article_id="A0", title="known")]
+    hist = History(
+        user_id="u1",
+        clicked_ids=["A0", "GHOST"],
+        times=[datetime(2023, 5, 1), datetime(2023, 5, 2)],
+    )
+    compact = CompactHistories([hist], _texts_by_id(articles))
+    assert compact.texts_before("u1", datetime(2023, 6, 1)) == ["known"]
+
+
+def test_compact_histories_unknown_user_is_cold_not_an_error() -> None:
+    compact = CompactHistories([], {"A0": "text"})
+    assert compact.texts_before("nobody", datetime(2023, 5, 1)) == []

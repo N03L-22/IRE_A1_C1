@@ -147,6 +147,87 @@ def build_predictions(
 _WORKER: dict = {}
 
 
+class CompactHistories:
+    """Worker-local click histories, stored as int arrays instead of strings.
+
+    **Why this exists.** Measured on EB-NeRD's test split, a worker peaked at
+    **15.08 GB**, of which the articles and the BM25 index were only 1.82 GB.
+    The remaining ~13.3 GB was 807,677 users x 116,825,984 click ids held as
+    Python ``str`` objects -- roughly 57 bytes of interpreter overhead apiece
+    for a value the parquet file stores as int32. One worker therefore did not
+    leave room for a second, and the parallel path could not be used at all.
+
+    Storing the same ids as ``array('i')`` indices into a shared article table
+    costs 4 contiguous bytes each: **~0.47 GB instead of ~13.3 GB**, so a
+    worker fits in ~2.5 GB and six of them fit comfortably in 20 GB.
+
+    **Why it is worker-local and not a schema change.** ``History.clicked_ids``
+    is also read by ``src/eval/harness.py`` and, critically, by
+    ``tests/test_no_leakage.py`` -- ``History.before()`` *is* the leakage
+    boundary that Q9 requires a test for. Changing its element type would put
+    a memory optimisation on Q9's correctness surface for no benefit, since
+    only this path is memory-bound.
+
+    Here the ids never escape: they are consumed immediately as a lookup key
+    on the way to article text, and nothing downstream ever sees them. That
+    makes the representation a private detail of one loop.
+
+    > [!warning] This reimplements the truncation, so it is tested against the
+    > > original
+    > ``texts_before()`` duplicates the ``< cutoff`` logic of
+    > ``History.before()``. Duplicated logic on the leakage boundary is exactly
+    > the kind of thing that drifts silently, so
+    > ``test_submit.py::test_compact_histories_match_history_before`` asserts
+    > the two agree on the same inputs. Without that test this optimisation
+    > would not be worth making.
+    """
+
+    __slots__ = ("_ids", "_times", "_texts")
+
+    def __init__(self, histories, texts_by_id: dict[str, str]) -> None:
+        from array import array
+
+        # One dense index per article, shared by every user.
+        order = list(texts_by_id)
+        index = {aid: i for i, aid in enumerate(order)}
+        self._texts: list[str] = [texts_by_id[a] for a in order]
+
+        self._ids: dict[str, "array"] = {}
+        self._times: dict[str, list] = {}
+        for h in histories:
+            pairs = [
+                (index[a], t)
+                for a, t in zip(h.clicked_ids, h.times or [None] * len(h.clicked_ids))
+                if a in index
+            ]
+            if not pairs:
+                continue
+            self._ids[h.user_id] = array("i", [p[0] for p in pairs])
+            # Timestamps are kept only when the dataset has them. On MIND they
+            # are None (F1) and truncation is not verifiable anyway.
+            if h.times is not None:
+                self._times[h.user_id] = [p[1] for p in pairs]
+
+    def __len__(self) -> int:
+        return len(self._ids)
+
+    def texts_before(self, user_id: str, cutoff) -> list[str]:
+        """Retrieval text of this user's clicks strictly before ``cutoff``.
+
+        Mirrors ``History.before()`` followed by the id-to-text lookup the
+        caller would otherwise do, but without materialising the id list.
+        """
+        ids = self._ids.get(user_id)
+        if ids is None:
+            return []
+        times = self._times.get(user_id)
+        if times is None:
+            # No timestamps: return everything, exactly as History.before()
+            # does when times is None.
+            return [self._texts[i] for i in ids]
+        return [self._texts[i] for i, t in zip(ids, times) if t < cutoff]
+
+
 def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str) -> None:
     global _WORKER
     logging.getLogger("bm25s").setLevel(logging.ERROR)
@@ -157,11 +238,14 @@ def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str) -> Non
         articles = {a.article_id: a for a in reader.articles()}
     retriever = BM25Retriever(**BEST[dataset])
     retriever.index(list(articles.values()))
+
+    texts_by_id = {aid: a.retrieval_text for aid, a in articles.items()}
+    histories = CompactHistories(reader.histories(test_split), texts_by_id)
+
     _WORKER = {
         "reader": reader,
-        "articles": articles,
         "retriever": retriever,
-        "histories": {h.user_id: h for h in reader.histories(test_split)},
+        "histories": histories,
         "split": test_split,
     }
 
@@ -170,18 +254,15 @@ def _predict_row_group(task: tuple[int, str]) -> tuple[int, str, int, int]:
     """Score one row group, write a shard, return its path and counts."""
     rg_idx, shard_path = task
     reader = _WORKER["reader"]
-    articles = _WORKER["articles"]
-    histories = _WORKER["histories"]
+    histories: CompactHistories = _WORKER["histories"]
     retriever = _WORKER["retriever"]
 
     written = cold = 0
     with open(shard_path, "w") as f:
         for imp in reader.impressions_row_group(_WORKER["split"], rg_idx):
-            hist = histories.get(imp.user_id)
-            texts: list[str] = []
-            if hist is not None:
-                past = hist.before(imp.time)
-                texts = [articles[a].retrieval_text for a in past if a in articles]
+            # One call replaces truncate-then-look-up-text. The leakage
+            # boundary is still applied -- see CompactHistories.texts_before.
+            texts = histories.texts_before(imp.user_id, imp.time)
 
             scores = retriever.score_subset(texts, imp.candidates) if texts else {}
             if not texts:

@@ -14,17 +14,26 @@ import pytest
 from src.submit.codabench import SUBMISSION_MEMBER, rank_candidates
 
 
-def test_archive_member_name_is_exactly_prediction_txt() -> None:
-    """The scorers open this path literally.
+def test_archive_member_names_differ_between_competitions() -> None:
+    """The two scorers open different filenames -- one letter apart.
 
     A first MIND submission failed with
 
         FileNotFoundError: '/app/input/res/prediction.txt'
 
     because the archive contained `mind_prediction.txt`. The predictions were
-    correct; only the name inside the zip was wrong.
+    correct; only the name inside the zip was wrong (F35).
+
+    Checking upstream afterwards found the competitions do NOT agree:
+    MIND's evaluate.py opens "prediction.txt", while EB-NeRD's
+    ebrec.utils._python.write_submission_file defaults to "predictions.txt".
+    Using one name for both would have failed the EB-NeRD upload the same way.
     """
-    assert SUBMISSION_MEMBER == "prediction.txt"
+    assert SUBMISSION_MEMBER["mind"] == "prediction.txt"
+    assert SUBMISSION_MEMBER["ebnerd"] == "predictions.txt"
+    assert SUBMISSION_MEMBER["mind"] != SUBMISSION_MEMBER["ebnerd"], (
+        "if these ever match, verify upstream rather than assuming"
+    )
 
 
 def test_ranks_are_a_permutation_aligned_to_the_original_slate() -> None:
@@ -61,7 +70,7 @@ def test_built_mind_archive_has_the_right_member() -> None:
     """Guard the artefact itself, not just the constant."""
     with zipfile.ZipFile("submissions/mind_prediction.zip") as zf:
         names = zf.namelist()
-    assert names == [SUBMISSION_MEMBER], f"archive contains {names}"
+    assert names == [SUBMISSION_MEMBER["mind"]], f"archive contains {names}"
 
 
 # ---------------------------------------------------------------------------
@@ -203,3 +212,34 @@ def test_build_retriever_accepts_all_three_kinds() -> None:
 
     with pytest.raises(ValueError):
         build_retriever("nonsense", "mind")
+
+
+def test_rank_convention_matches_ebnerd_upstream() -> None:
+    """Our ranks must equal ebrec's rank_predictions_by_score.
+
+    Upstream (ebrec/utils/_python.py) computes:
+
+        np.argsort(np.argsort(arr)[::-1]) + 1
+
+    i.e. 1-based ranks, highest score = rank 1, aligned to the ORIGINAL
+    candidate order. Pinned here against their exact expression, including the
+    examples from their own docstring, so a refactor of rank_candidates cannot
+    silently diverge from the scorer.
+    """
+    import numpy as np
+
+    def upstream(scores):
+        a = np.array(scores)
+        return (np.argsort(np.argsort(a)[::-1]) + 1).tolist()
+
+    cases = [
+        [0.2, 0.1, 0.3],          # from their docstring
+        [0.1, 0.2],               # from their docstring
+        [0.4, 0.2, 0.1, 0.3],     # from their docstring
+        [5.0, 1.0, 3.0, 9.0],
+        [1.0],
+    ]
+    for scores in cases:
+        cands = [f"c{i}" for i in range(len(scores))]
+        ours = rank_candidates(cands, dict(zip(cands, scores)))
+        assert ours == upstream(scores), f"{scores}: ours {ours} vs upstream {upstream(scores)}"

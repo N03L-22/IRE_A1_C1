@@ -41,10 +41,21 @@ from ..retrieval.semantic import HistoryIdRetriever
 
 log = logging.getLogger("submit")
 
-#: The filename the scorers open inside the uploaded archive. Not negotiable:
-#: MIND's evaluate.py opens this exact path and raises FileNotFoundError
-#: otherwise.
-SUBMISSION_MEMBER = "prediction.txt"
+#: The filename each scorer opens inside the uploaded archive. **The two
+#: competitions differ by one letter**, and getting it wrong costs a
+#: submission from the daily quota:
+#:
+#:   MIND     evaluate.py does open(os.path.join(submit_dir, "prediction.txt"))
+#:            -> FileNotFoundError on anything else. Confirmed by a rejected
+#:            upload (F35).
+#:   EB-NeRD  ebrec.utils._python.write_submission_file defaults to
+#:            Path("predictions.txt") and zips with arcname=path.name.
+#:
+#: Verified against both upstream sources on 2026-08-26.
+SUBMISSION_MEMBER = {
+    "mind": "prediction.txt",
+    "ebnerd": "predictions.txt",
+}
 
 #: Measured peak RSS of one worker on EB-NeRD's test split: index + articles
 #: (1.8 GB) plus CompactHistories over 807,677 users (~7.4 GB). Was 15.1 GB
@@ -567,7 +578,7 @@ def main(argv: list[str] | None = None) -> int:
     # not overwrite each other; only the arcname is fixed.
     zip_path = args.out_dir / f"{args.dataset}_prediction.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.write(txt, arcname=SUBMISSION_MEMBER)
+        zf.write(txt, arcname=SUBMISSION_MEMBER[args.dataset])
     log.info("zipped -> %s (%.1f MB)", zip_path, zip_path.stat().st_size / 1e6)
 
     meta = args.out_dir / f"{args.dataset}_prediction.meta.json"

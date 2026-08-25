@@ -273,6 +273,9 @@ def get_reader(dataset: str, work_dir: Path, tier: str = "small"):
 
 #: Split names differ between datasets; callers ask for a role, not a folder.
 SPLIT_NAMES = {
-    "mind": {"train": "train", "heldout": "dev"},
-    "ebnerd": {"train": "train", "heldout": "validation"},
+    # "test" is the UNLABELLED leaderboard split (Q5 only). It exists at the
+    # large tier alone and can never contribute to an offline metric -- see
+    # findings F11/F14.
+    "mind": {"train": "train", "heldout": "dev", "test": "large_test"},
+    "ebnerd": {"train": "train", "heldout": "validation", "test": "test"},
 }

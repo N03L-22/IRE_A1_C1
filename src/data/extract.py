@@ -92,9 +92,32 @@ ARTIFACTS: tuple[Archive, ...] = (
     ),
 )
 
+#: The large tier -- Codabench submission only (brief v2 makes it mandatory
+#: for Q5). Never the source of a headline metric: MIND-large test and
+#: EB-NeRD's testset are UNLABELLED, so no offline number can be computed
+#: from them (F14). Small stays the measurement tier.
+LARGE_TIER: tuple[Archive, ...] = (
+    Archive(
+        name="mind-large-test",
+        zip_path="mind/MINDlarge_test.zip",
+        dest="mind/large_test",
+        sentinel="behaviors.tsv",
+    ),
+    Archive(
+        name="ebnerd-large",
+        zip_path="ebnerd/ebnerd_large.zip",
+        dest="ebnerd/large",
+        sentinel="articles.parquet",
+    ),
+    # NOTE: ebnerd_testset.zip is a SEPARATE download and is not present.
+    # ebnerd_large.zip ships train/ and validation/ only -- verified, no test
+    # member (F11). Without it the EB-NeRD leaderboard submission is blocked.
+)
+
 TIERS: dict[str, tuple[Archive, ...]] = {
     "small": SMALL_TIER,
     "demo": DEMO_TIER,
+    "large": LARGE_TIER,
     "artifacts": ARTIFACTS,
 }
 

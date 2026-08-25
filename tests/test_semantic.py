@@ -114,16 +114,22 @@ def test_ef_search_scales_with_corpus_size() -> None:
     1M vectors, the ef=128 that was lossless at 125K collapses to 0.68 recall
     -- a third of the answer lost, with no error and no warning.
 
-    Recall is cheap to buy back: ef=1024 restores 0.9588 while still being 68x
-    faster than exact search. So the default is derived from the corpus rather
-    than pinned.
+    Recall is cheap to buy back. The required ef depends on the graph density:
+    at M=16 it takes ef=1024 to reach 0.9588, but at the shipped M=64 ef=512
+    already gives **0.9947** (F53). So the default is derived from the corpus
+    rather than pinned, and the threshold below is tied to the shipped M.
     """
-    from src.retrieval.semantic import default_ef_search
+    from src.retrieval.semantic import DEFAULT_M, default_ef_search
 
     small = default_ef_search(20_738)
     large = default_ef_search(1_000_000)
     assert small < large, "ef must grow with the corpus"
-    assert large >= 1024, f"1M corpus needs ef>=1024 for ~0.96 recall, got {large}"
+
+    # M=64/ef=512 was measured at 0.9947 recall; M=32 needs 1024 for 0.9944.
+    needed = 512 if DEFAULT_M >= 64 else 1024
+    assert large >= needed, (
+        f"at M={DEFAULT_M} a 1M corpus needs ef>={needed} for ~0.99 recall, got {large}"
+    )
 
     # Monotone: a bigger corpus never gets a smaller budget.
     sizes = [10_000, 50_000, 200_000, 500_000, 2_000_000]

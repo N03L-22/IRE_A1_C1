@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F52.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F53.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -502,6 +502,37 @@ to 500K, 1024 above. An explicit value still wins so sweeps can pin what they me
 
 **Also corrected in F50:** it quoted exact search at "4.6 s per query". That was the batch time for
 200 queries; the per-query cost is **22.8 ms**, a 200× error in the pessimistic direction.
+
+### F53 — A denser HNSW graph wins at fixed latency; shipped M=64 / ef=512 = 0.9947 recall at 45x
+F52 swept `efSearch` at M=16. Sweeping `M` as well shows the *graph* matters more than the search
+budget. 1M clustered vectors, 384-d, exact baseline **22.8 ms/query**. `results/ann_sweep_1m.json`.
+
+| M | ef | recall | ms/query | vs exact | graph mem |
+|---|---|---|---|---|---|
+| 16 | 1024 | 0.9588 | 0.34 | 68× | 0.13 GB |
+| 32 | 512 | 0.9793 | 0.34 | 67× | 0.26 GB |
+| **64** | **256** | 0.9759 | **0.31** | **73×** | 0.52 GB |
+| **64** | **512** | **0.9947** | 0.51 | **45×** | 0.52 GB |
+| 64 | 1024 | 0.9990 | 0.58 | 39× | 0.52 GB |
+
+**Read the frontier at fixed latency.** At ~0.34 ms, M=32 gives 0.9793 where M=16 gives 0.9588. At
+~0.31 ms, M=64 gives 0.9759 — better than M=16 managed at 0.34 ms. **More links means fewer dead
+ends, so the walk reaches the same recall while exploring fewer candidates.**
+
+*Shipped:* **M=64, `ef` derived from corpus size, 512 at the top end.** That is **0.9947 recall at
+45× the speed of exact search** — within half a percent of lossless, far below the noise in every
+downstream metric we measure. ef=1024 buys the last 0.43% for 14% more latency and is available when
+near-exactness is worth it.
+
+*What it costs:* 0.52 GB of graph against 1.54 GB of vectors, and a 183 s one-off build. Index
+memory is not the binding constraint here, which is why the densest graph tested is also the default.
+
+> [!important] The Q6 story is now complete, and it is not "it breaks"
+> F50 reported the pipeline breaking at 10× because ANN recall fell to 0.83. F52 showed that was a
+> stale `efSearch`; F53 shows a denser graph does better still. **At 1M vectors the shipped
+> configuration retrieves 99.5% of the exact answer 45× faster.** The honest 10× statement is:
+> *the defaults break, the method does not* — and both dials that fix them were found by sweeping,
+> not by reasoning.
 
 ## Findings
 

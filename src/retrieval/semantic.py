@@ -57,11 +57,32 @@ BRUTE_FORCE_LIMIT = 200_000
 #:   ef= 512  recall 0.9071   0.22 ms/q   105x
 #:   ef=1024  recall 0.9588   0.34 ms/q    68x   <- the knee
 #:
-#: Recall is bought back almost free: 0.68 -> 0.96 costs 0.26 ms/query and is
-#: still 68x faster than exact search. A single global default cannot serve
-#: both 20K and 1M, so it is derived from the corpus size instead.
+#: Recall is bought back almost free, and those figures are for M=16. At the
+#: shipped M=64 the same ef values do considerably better -- ef=512 reaches
+#: **0.9947** at 1M (F53) -- which is why EF_SEARCH_LARGE is 512 rather than
+#: 1024: the denser graph already supplies what the wider search was buying.
+#: A single global default cannot serve both 20K and 1M, so it is derived
+#: from the corpus size instead.
 EF_SEARCH_BY_SIZE = ((50_000, 128), (200_000, 256), (500_000, 512))
-EF_SEARCH_LARGE = 1024
+EF_SEARCH_LARGE = 512
+
+#: Graph connectivity. Measured at 1M vectors (F53), a denser graph wins at
+#: *fixed latency* -- more links means fewer dead ends, so the walk needs
+#: fewer candidates to reach the same recall:
+#:
+#:   M=16 ef=1024  recall 0.9588  0.34 ms/q   68x   graph 0.13 GB
+#:   M=32 ef= 512  recall 0.9793  0.34 ms/q   67x   graph 0.26 GB
+#:   M=64 ef= 256  recall 0.9759  0.31 ms/q   73x   graph 0.52 GB
+#:   M=64 ef= 512  recall 0.9947  0.51 ms/q   45x   graph 0.52 GB
+#:
+#: **64 is the default**: it dominates the frontier at every latency point
+#: tested, and index memory is not the binding constraint here (0.52 GB of
+#: graph against 1.54 GB of vectors at 1M). Paired with ef=512 that is
+#: **0.9947 recall at 45x the speed of exact search** -- within half a percent
+#: of lossless, comfortably below the noise in every downstream metric we
+#: measure. Use ef=1024 for 0.9990 when near-exactness is worth 14% more
+#: latency; drop to M=32 only if index memory becomes the constraint.
+DEFAULT_M = 64
 
 
 def default_ef_search(n_vectors: int) -> int:
@@ -165,6 +186,7 @@ class SemanticRetriever:
         last_n: int = 20,
         batch_size: int = 128,
         ef_search: int | None = None,
+        m: int = DEFAULT_M,
         vectors: np.ndarray | None = None,
         vector_ids: list[str] | None = None,
     ) -> None:
@@ -173,6 +195,8 @@ class SemanticRetriever:
         self.tau = tau
         self.last_n = last_n
         self.batch_size = batch_size
+        #: None means "derive from corpus size at index time" (F52).
+        self.m = m
         #: None means "derive from corpus size at index time" (F52).
         self.ef_search = ef_search
         self.name = f"semantic({model_key},tau={tau:g},n={last_n})"
@@ -238,7 +262,7 @@ class SemanticRetriever:
         import faiss
 
         dim = self._vecs.shape[1]
-        idx = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
+        idx = faiss.IndexHNSWFlat(dim, self.m, faiss.METRIC_INNER_PRODUCT)
         idx.hnsw.efConstruction = 200
         idx.add(self._vecs)
         ef = self.ef_search or default_ef_search(len(self._ids))
@@ -247,9 +271,9 @@ class SemanticRetriever:
         self._index = idx
         self.name += "+hnsw"
         log.info(
-            "%s: HNSW over %d vectors, efSearch=%d "
+            "%s: HNSW over %d vectors, M=%d efSearch=%d "
             "(report the exact-search gap alongside -- ANN recall alone is not interpretable)",
-            self.name, len(self._ids), self.ef_search,
+            self.name, len(self._ids), self.m, self.ef_search,
         )
 
     def _query_vector(self, history_text: list[str]) -> np.ndarray | None:

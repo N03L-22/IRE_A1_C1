@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Eight defects, all in `mistakes.md` with full detail. **Seven of eight did not crash** — every one
+Nine defects, all in `mistakes.md` with full detail. **Eight of nine did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -822,3 +822,7 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 03:49 · `0df5ffb1`
 
 > lets try the polar for now with GPU for the semantic. i believe the fusion should be doing better instead of sem or lex alone. maybe other params like history or changing the decay or strictly taking last 3?  try these before polar with GPU in branch and then merge if good?
+
+### 2026-08-26 04:08 · `0df5ffb1`
+
+> lets do the polar with GPU on the branch now

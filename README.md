@@ -75,7 +75,7 @@ src/
   eval/         metrics (two regimes), bootstrap, slices, harness, sweeps
   submit/       Codabench prediction files
 tests/          100 tests, incl. leakage mutation tests
-plan/           phase plans + execution log (findings F1-F58)
+plan/           phase plans + execution log (findings F1-F59)
 results/        every measured run, as JSON with CIs and resolved budget
 report/         a1_design_note.tex (the Q6 deliverable) + figs/ screenshots
 notebooks/      one-off data exploration; NOT part of the pipeline
@@ -91,8 +91,8 @@ configs/        per-dataset paths and resource budget
 | [`foundations.md`](foundations.md) | Every concept from scratch — vectors, BM25, embeddings, and the evaluation metrics built up need → why → how |
 | [`architecture.md`](architecture.md) | What the system **is**, plus the measured dataset facts |
 | [`decisions.md`](decisions.md) | What we **chose and rejected**, open questions, and the cost of each choice — the design-note source |
-| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F58, dated. Also the architecture changelog |
-| [`mistakes.md`](mistakes.md) | Every defect found, in plain terms — seven of eight did not crash |
+| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F59, dated. Also the architecture changelog |
+| [`mistakes.md`](mistakes.md) | Every defect found, in plain terms — eight of nine did not crash |
 | [`ai-log.md`](ai-log.md) | Q7.4 deliverable: curated prompts, what worked, what failed |
 
 ---
@@ -208,11 +208,22 @@ honest. Chosen before test was touched: EB-NeRD `k1=1.6, b=1.0, n=15`; MIND `k1=
 
 ## Known gaps
 
-1. **Q3 (semantic retrieval) is not built** — so no lexical-vs-semantic comparison, the substance of
-   Q3.5, exists yet.
-2. **No leaderboard scores.** Prediction files are generated and format-validated; not submitted.
-3. **n = 800 per dataset** for CI-bearing results — several reported differences are not
-   statistically separable, and the report says so at each point.
-4. **HNSW figures use random vectors** (near-orthogonal, the worst case) and are a pessimistic
-   bound; they must be re-run on real embeddings.
-5. **MIND's title-only ablation timed out** and is not reported.
+1. **The offline harness is not a reliable proxy for the leaderboard** — three-for-three in
+   disagreeing, and in both directions (F34 understated a real effect, F42 missed one entirely,
+   F58 overstated one). It remains sound for what it was built for — leakage, slicing, the recency
+   finding — but no parameter choice here is settled until it has been submitted. **This is the
+   project's strongest methodological finding, and it is a limitation, not a result.**
+2. **EB-NeRD's leaderboard score is pending**, so the cross-dataset comparison in the design note
+   rests on offline numbers on that side — see gap 1 for what that is worth.
+3. **Several differences are not statistically separable**, and each is labelled inconclusive at
+   the point it is reported rather than rounded into a claim. Where a null result comes from an
+   underpowered experiment rather than an absent effect, the number of impressions the two
+   configurations actually differ on is given (F46: 4 of 800).
+4. **MIND's title-only ablation timed out** and is not reported.
+5. **The leakage invariant is machine-checked only on EB-NeRD.** MIND's history carries no
+   per-click timestamps, so there the boundary rests on the authors' construction. Recorded per row
+   as `history_verifiable` rather than claimed.
+
+*Closed since the first draft:* Q3 semantic retrieval is built and compared (F39); three MIND
+leaderboard scores are in (F58); the HNSW figures were re-run on real vectors, which reversed the
+conclusion (F49 — random vectors are near-orthogonal and were the worst case).

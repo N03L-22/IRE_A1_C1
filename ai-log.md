@@ -245,3 +245,7 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 21:59 · `0df5ffb1`
 
 > use 28 then, i havee freeed some mem
+
+### 2026-08-25 22:20 · `0df5ffb1`
+
+> make sure the Q3 is parallelized where possible and GPU is accessible

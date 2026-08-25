@@ -33,7 +33,7 @@ from datetime import datetime
 import numpy as np
 
 from ..data.schema import Article
-from .encode import DEFAULT_MODEL, encode_texts, l2_normalise
+from .encode import DEFAULT_MODEL, encode_cached, l2_normalise
 
 log = logging.getLogger(__name__)
 
@@ -133,7 +133,7 @@ class SemanticRetriever:
         index_kind: str = "auto",
         tau: float = DEFAULT_COHERENCE_TAU,
         last_n: int = 20,
-        batch_size: int = 64,
+        batch_size: int = 128,
         ef_search: int = 128,
         vectors: np.ndarray | None = None,
         vector_ids: list[str] | None = None,
@@ -168,8 +168,11 @@ class SemanticRetriever:
         else:
             self._ids = [a.article_id for a in articles]
             texts = [a.retrieval_text for a in articles]
-            self._vecs, self.encode_stats = encode_texts(
-                texts, model_key=self.model_key, batch_size=self.batch_size
+            # Cached: the Q3.5 comparison builds several retrievers over the
+            # same corpus (bare, windowed, fused), and encoding is
+            # deterministic. One forward pass serves all of them.
+            self._vecs, self.encode_stats = encode_cached(
+                texts, self._ids, model_key=self.model_key, batch_size=self.batch_size
             )
 
         self._by_id = {aid: i for i, aid in enumerate(self._ids)}

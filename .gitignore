@@ -36,3 +36,6 @@ report/*.aux
 report/*.log
 report/*.out
 report/*.toc
+
+# Embedding cache -- regenerable in ~15s by re-running; keyed on model+corpus.
+data/store/embeddings/

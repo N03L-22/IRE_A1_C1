@@ -176,6 +176,13 @@ class SemanticRetriever:
             )
 
         self._by_id = {aid: i for i, aid in enumerate(self._ids)}
+        # The harness identifies history by retrieval text, so map that too.
+        # setdefault keeps the first row when two articles share a title.
+        self._by_text: dict[str, int] = {}
+        for a in articles:
+            row = self._by_id.get(a.article_id)
+            if row is not None:
+                self._by_text.setdefault(a.retrieval_text, row)
 
         # An un-normalised index with inner-product search silently ranks by
         # magnitude -- i.e. builds a popularity ranker that looks like a
@@ -217,9 +224,22 @@ class SemanticRetriever:
 
         Uses the *indexed* vectors rather than re-encoding, so a user's query
         is built from exactly the representations the corpus is searched with.
+
+        > [!warning] The harness passes retrieval TEXT, not article ids
+        > This originally looked history entries up in ``self._by_id``, an
+        > article-id map -- so every lookup missed, the query vector was
+        > always None, and the retriever silently returned **zero results with
+        > no error**. It surfaced only when an ablation used this class
+        > directly and scored recall 0.0000 across the board, including for
+        > provided click-trained vectors that could not plausibly score zero.
+        >
+        > ``_by_text`` is built in ``index()`` and tried first; ``_by_id`` is
+        > kept as a fallback so a caller that genuinely passes ids still works.
         """
         recent = history_text[-self.last_n :] if self.last_n > 0 else history_text
-        rows = [self._by_id[t] for t in recent if t in self._by_id]
+        rows = [self._by_text[t] for t in recent if t in self._by_text]
+        if not rows:  # fall back to id lookup for callers that pass ids
+            rows = [self._by_id[t] for t in recent if t in self._by_id]
         if not rows:
             return None
         vec, strategy = build_user_vector(self._vecs[rows], tau=self.tau)
@@ -301,17 +321,3 @@ class HistoryIdRetriever(SemanticRetriever):
 
     def index(self, articles: list[Article]) -> None:
         super().index(articles)
-        self._by_text: dict[str, int] = {}
-        for a in articles:
-            row = self._by_id.get(a.article_id)
-            if row is not None:
-                self._by_text.setdefault(a.retrieval_text, row)
-
-    def _query_vector(self, history_text: list[str]) -> np.ndarray | None:
-        recent = history_text[-self.last_n :] if self.last_n > 0 else history_text
-        rows = [self._by_text[t] for t in recent if t in self._by_text]
-        if not rows:
-            return None
-        vec, strategy = build_user_vector(self._vecs[rows], tau=self.tau)
-        self.strategy_counts[strategy] = self.strategy_counts.get(strategy, 0) + 1
-        return vec

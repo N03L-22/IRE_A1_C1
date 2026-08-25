@@ -29,5 +29,15 @@
     "unique_ids": 2370727,
     "valid_permutations": 2370727
   },
-  "expected": "+0.004 AUC vs bm25 per offline harness (F39); inside the CI, so either outcome is informative"
+  "expected": "+0.004 AUC vs bm25 per offline harness (F39); inside the CI, so either outcome is informative",
+  "leaderboard": {
+    "submission_id": 901779,
+    "auc": 0.5934,
+    "date": "2026-08-26T01:07"
+  },
+  "prediction_error": {
+    "forecast_auc_gain": 0.004,
+    "actual_auc_gain": 0.0366,
+    "note": "offline harness understated the gain ~9x; second time it mis-ranked vs the leaderboard (see F34)"
+  }
 }

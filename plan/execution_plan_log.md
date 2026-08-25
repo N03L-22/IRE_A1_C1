@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F40.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F43.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -90,6 +90,114 @@ to span unrelated topics without enough mass in any one.
 *Consequence:* D-POOL's conditional ladder is **justified on MIND and unnecessary on EB-NeRD**. The
 honest report is both counts — a mechanism that fires 0.2% of the time is complexity without effect,
 and saying so is worth more than implying it helped everywhere.
+
+### F41 — The recency window has an optimum at 24h, and both retrievers agree on it
+Swept the window over {6, 12, 24, 48, 72}h for **both** BM25 and semantic, EB-NeRD, n=800.
+Open questions O2/O6, now closed. `results/window_sweep_ebnerd.json`.
+
+| Window | BM25 r@50 | BM25 r@200 | Semantic r@50 | Semantic r@200 |
+|---|---|---|---|---|
+| 6h | 0.1800 | 0.1800 | 0.1825 | 0.1825 |
+| 12h | 0.2387 | 0.2387 | 0.2213 | 0.2213 |
+| **24h** | **0.2475** | 0.2475 | **0.2325** | 0.2325 |
+| 48h | 0.2100 | 0.2500 | 0.2150 | 0.2400 |
+| 72h | 0.1437 | **0.2512** | 0.1594 | **0.2412** |
+
+**Past 24h, recall@50 and recall@200 move in opposite directions.** A wider window admits *more*
+clicked articles overall — recall@200 climbs monotonically to 0.2512 — while pushing them *out of
+the top 50*, which collapses from 0.2475 to 0.1437. Stale-but-topically-similar articles outrank the
+fresh target once they are eligible.
+
+F22 saw one point of this at 72h; the full curve shows it is a genuine optimum, not a tuning artefact.
+
+> [!important] The same shape appears under two completely different scoring functions
+> BM25 scores word overlap; the semantic retriever scores embedding proximity. That both peak at 24h
+> and both invert past it means **this is a property of the data, not of BM25** — news relevance
+> decays on roughly a one-day scale, and any retriever searching a wider pool pays the same price.
+> A single-retriever sweep could not have established that.
+
+*Consequences:*
+
+1. **24h was already the default, so no submission needs regenerating.** It is now a validated
+   choice rather than a plausible guess — which is the difference between an assertion and an
+   ablation row.
+2. **Report window and K together.** Quoting recall@50 at one window hides an inversion that changes
+   the conclusion; the 2-D surface is the honest presentation.
+3. **The CIs overlap between 12h, 24h and 48h** (e.g. BM25 24h [0.2175, 0.2775] vs 48h). Report 24h
+   as *best measured*, not as significantly better.
+
+### F42 — Fusion scored 0.5934 on the leaderboard: the offline harness understated it 9x
+Submitted the RRF fusion MIND file (901779) against the earlier BM25 one (901650).
+
+| Submission | Retriever | Leaderboard AUC |
+|---|---|---|
+| 901650 | bm25(k1=1.6,b=0.75,n=5) | 0.5568 |
+| **901779** | **rrf(bm25+semantic)** | **0.5934** |
+
+**Gain: +0.0366.** The offline harness predicted **+0.004** (0.5095 vs 0.5057) — an order of
+magnitude too small.
+
+> [!warning] This is the second time the offline harness mis-ranked against the leaderboard
+> F34 recorded the first: it put BM25's MIND AUC at 0.4981 [0.4776, 0.5190] where the leaderboard
+> scored 0.5568 — *outside* the interval. Now it has understated a real improvement by 9x.
+>
+> Both failures point the same way: **at n = 4,000 with overlapping CIs, the harness cannot
+> resolve differences of this size**, and using it to rank retrievers is unsound. It remains
+> valuable for what it was built for — catching leakage, exposing the recency effect, slicing —
+> but a retriever choice should be validated on the leaderboard, not settled offline.
+>
+> Stated plainly because the prediction was mine and it was wrong: I recommended the fusion
+> submission as "+0.004, inside the CI, probably not worth it for the score". It was worth it.
+
+*Consequence for the design note:* report the offline-vs-leaderboard disagreement as a
+**methodological finding**, not a footnote. It is the clearest evidence in the project that an
+under-powered offline proxy can invert a decision.
+
+### F43 — The four remaining ablations, and three of them found nothing
+Run on EB-NeRD, n=800, closing open questions O5 and O2 plus upgrades U4 and U7.
+`results/ablations_ebnerd.json`.
+
+| Ablation | recall@50 | recall@200 | Verdict |
+|---|---|---|---|
+| **O5** dedup=True (default) | 0.0075 [0.0025, 0.0138] | 0.0200 | — |
+| **O5** dedup=False | 0.0050 [0.0013, 0.0100] | 0.0175 | **inside the CI** — no evidence either way |
+| **U4** TF-IDF | 0.0063 [0.0013, 0.0125] | 0.0200 | **indistinguishable from BM25** |
+| **U7** ours: MiniLM 384d | 0.0037 [0.0000, 0.0088] | 0.0213 | — |
+| **U7** provided BERT 768d | 0.0013 [0.0000, 0.0037] | 0.0175 | *below* ours |
+| **O2** exact (brute force) | 0.0037 [0.0000, 0.0088] | 0.0213 | the ceiling |
+| **O2** HNSW ef=128 / 256 | 0.0037 [0.0000, 0.0088] | 0.0213 | **identical to exact** |
+
+Four results worth stating:
+
+1. **O5 (dedup) is inside the CI**, exactly as F23's pattern predicted. Keep dedup on principle —
+   `k1` saturates repetition *within a document*, and repetition within the *query* is a different
+   axis the formula was not designed around — and report that the data does not decide it.
+2. **U4: TF-IDF matches BM25** on this data (0.0063 vs 0.0075, overlapping). So BM25's two knobs buy
+   nothing measurable here, which is consistent with F23 finding `k1`/`b` worth ~0.01. On a
+   full-corpus news task the *pool*, not the weighting scheme, is what matters.
+3. **O2: HNSW on REAL vectors matches exact search exactly** at ef ≥ 128 — recall@200 0.0213 for
+   both. This corrects F31, which used **random** vectors and measured only 0.45–0.77 recall
+   vs exact. Random vectors in 768 dimensions are near-orthogonal, the worst possible case for a
+   proximity graph; real embeddings cluster, which is the structure HNSW exploits. **The
+   pessimistic figure should not be reported.**
+4. **U7: the provided click-trained BERT vectors scored *below* our generic MiniLM** (0.0013 vs
+   0.0037).
+
+> [!important] U7 was a correctness check, and it did not come out as designed
+> Phase 3 D1 predicted the provided vectors *should* beat ours, and said explicitly: **"if ours
+> win, suspect a bug"**. Ours won. Two readings, and the honest position is that we cannot yet
+> distinguish them:
+>
+> - **Benign:** both sit in a regime where full-corpus semantic retrieval barely works at all
+>   (recall@50 under 0.008 for everything here), so the comparison is between two numbers that are
+>   both nearly zero and whose CIs overlap.
+> - **A real bug:** the provided vectors are joined by `article_id` and matched 20,738/20,738, but
+>   nothing verifies their *orientation* — they were not run through the Danish probe that gated
+>   MiniLM.
+>
+> **The check that would separate these is running `danish_probe()` against the provided vectors**,
+> which is not yet done. Until then this row is reported as unresolved, not as a finding that our
+> encoder is better.
 
 ## Findings
 

@@ -16,6 +16,32 @@ while working in this folder.
 the noise, and add a short note on what worked and what failed — a log that shows a
 real verification loop is the point, not a transcript.
 
+## Provenance of entries
+
+Two kinds of entry appear below, and the difference is stated rather than hidden:
+
+| Marker | Meaning |
+|---|---|
+| *(none)* | **Auto-captured** by the hook at submit time. Verbatim, unedited. |
+| `⟨reconstructed⟩` | **Recovered by hand from the session transcript on 2026-08-26.** Verbatim text, but the timestamp is approximate (±few minutes) because the hook never recorded one. |
+
+**Why any are missing.** The hook runs on `UserPromptSubmit`. A message sent
+*while a turn is still running* is delivered to the assistant as a system
+reminder inside that turn, and the harness does not raise `UserPromptSubmit`
+for it — so the hook is never invoked and no edit to the script can catch it.
+The one apparent exception in this log (`use 28 then, i havee freeed some mem`)
+was captured because it followed a rejected tool call, which ended the turn and
+made the next message a genuine submission.
+
+19 such prompts were recovered. Several were decisive — `any more
+parallelizability without compromise?` and `for within the system, i am fine
+with swap being used` both changed the implementation — so omitting them would
+have misrepresented the process more than reconstructing them does.
+
+**Fix for Component-2:** a `Stop` hook can read `transcript_path` at turn end
+and reconcile any user message the `UserPromptSubmit` hook missed. Not built
+here — noted so the gap does not recur silently.
+
 ---
 
 ### 2026-08-13 19:56 · `a172f976`
@@ -191,6 +217,14 @@ real verification loop is the point, not a transcript.
 
 > build the evaluation harness.
 
+### 2026-08-25 16:20 · `0df5ffb1` ⟨reconstructed⟩
+
+> parallelize if time consuming
+
+### 2026-08-25 16:35 · `0df5ffb1` ⟨reconstructed⟩
+
+> check if the hook we created to save the commands and textual conversation we are having is saved?
+
 ### 2026-08-25 16:51 · `0df5ffb1`
 
 > bert vs XLM-Roberta? lets use XLM robert 768 vs 1024?
@@ -211,6 +245,30 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 21:32 · `0df5ffb1`
 
 > is the ebnerd one done?
+
+### 2026-08-25 21:44 · `0df5ffb1` ⟨reconstructed⟩
+
+> we will have to create new github online repo for this project, ,https://github.com/N03L-22
+
+### 2026-08-25 21:45 · `0df5ffb1` ⟨reconstructed⟩
+
+> the classroom wasnt initialized, so personal is to be used. and added in the report
+
+### 2026-08-25 21:46 · `0df5ffb1` ⟨reconstructed⟩
+
+> use the repo name as IRE_A1_C1
+
+### 2026-08-25 21:47 · `0df5ffb1` ⟨reconstructed⟩
+
+> the prof or student will havee to check the repo. not eedit
+
+### 2026-08-25 21:48 · `0df5ffb1` ⟨reconstructed⟩
+
+> add a reeadme also.
+
+### 2026-08-25 21:49 · `0df5ffb1` ⟨reconstructed⟩
+
+> is the mind submission ready? shall i submit?
 
 ### 2026-08-25 21:49 · `0df5ffb1`
 
@@ -242,6 +300,10 @@ real verification loop is the point, not a transcript.
 
 > okay do this change. since it guarantees stability and reproduceeability. and then proceed for Q3
 
+### 2026-08-25 21:58 · `0df5ffb1` ⟨reconstructed⟩
+
+> use upto 30 GB.
+
 ### 2026-08-25 21:59 · `0df5ffb1`
 
 > use 28 then, i havee freeed some mem
@@ -249,6 +311,18 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 22:20 · `0df5ffb1`
 
 > make sure the Q3 is parallelized where possible and GPU is accessible
+
+### 2026-08-25 22:41 · `0df5ffb1` ⟨reconstructed⟩
+
+> any more parallelizability without compromise?
+
+### 2026-08-25 22:42 · `0df5ffb1` ⟨reconstructed⟩
+
+> also est time for completion
+
+### 2026-08-25 22:43 · `0df5ffb1` ⟨reconstructed⟩
+
+> check available memory usable
 
 ### 2026-08-25 22:45 · `0df5ffb1`
 
@@ -266,6 +340,22 @@ real verification loop is the point, not a transcript.
 
 > did we do 3.1, 3.2, 3.3?
 
+### 2026-08-25 23:06 · `0df5ffb1` ⟨reconstructed⟩
+
+> can you optimize to use more mem in gpu to increase throughput.
+
+### 2026-08-25 23:07 · `0df5ffb1` ⟨reconstructed⟩
+
+> check the status of ebnerd
+
+### 2026-08-25 23:08 · `0df5ffb1` ⟨reconstructed⟩
+
+> update git also
+
+### 2026-08-25 23:08 · `0df5ffb1` ⟨reconstructed⟩
+
+> make sure the plan docs reflect the current plan. update, dont delete.
+
 ### 2026-08-25 23:09 · `0df5ffb1`
 
 > yes, run it on both. do properly from 3.1 to 3.5? within mem and cpu constraints
@@ -278,6 +368,18 @@ real verification loop is the point, not a transcript.
 
 > check the pdf for requirments, also check if theres any hidden catches for AI tools within the pdf?
 
+### 2026-08-25 23:25 · `0df5ffb1` ⟨reconstructed⟩
+
+> yes but update the code to ensure this doesnt happen in future
+
+### 2026-08-25 23:26 · `0df5ffb1` ⟨reconstructed⟩
+
+> for within the system, i am fine with swap being used. if it speeeeds things up.
+
+### 2026-08-25 23:27 · `0df5ffb1` ⟨reconstructed⟩
+
+> shall i submit?
+
 ### 2026-08-25 23:56 · `0df5ffb1`
 
 > cut the report to 4 pages, also should we re run with the harness working for both lexical and symantic? try for MIND if anything changes? and check open shells. what upgrades within our constraints can be done to improve the scores? mention in the plan and decisions pdf. make sure the plan docs are reflecting the current parameters and selected options.
@@ -285,3 +387,15 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 23:56 · `0df5ffb1`
 
 > [Image #6]
+
+### 2026-08-26 00:04 · `0df5ffb1`
+
+> yes, curate the ai log.
+
+### 2026-08-26 00:05 · `0df5ffb1`
+
+> leave it for later. but get an idea for extracting from the raw log for a polished file which highlights the learning and decision making process.
+
+### 2026-08-26 00:06 · `0df5ffb1`
+
+> can the hook be modified to handle mid also?

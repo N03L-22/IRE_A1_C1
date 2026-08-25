@@ -1,0 +1,24 @@
+{
+  "dataset": "mind",
+  "tier": "large",
+  "retriever": "bm25(k1=1.6,b=0.75,n=5)",
+  "params": {
+    "k1": 1.6,
+    "b": 0.75,
+    "last_n": 5
+  },
+  "generated_at": "2026-08-25T21:24:52",
+  "budget": {
+    "n_jobs": 28,
+    "mem_gb": 18.04,
+    "batch_size": 64,
+    "available_mem_gb": 20.04,
+    "total_cores": 32,
+    "load_average": 1.67,
+    "scaled_down": true
+  },
+  "lines": 2370727,
+  "cold_slates": 29108,
+  "seconds": 932.5,
+  "bytes": 291329312
+}

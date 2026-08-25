@@ -1,18 +1,26 @@
 ---
 type: note
 kind: reference
-title: A1 — Architecture & design decisions
+title: A1 — Architecture
 ---
 
-# A1 — Architecture & design decisions
+# A1 — Architecture
 
-Working notes for [[Assignment-1-Lexical-Semantic-Retrieval]]. Two halves: **what to build**, and
-**the decisions you have to make consciously** — because the grade is on design rigour, not scores.
+**What the system is** — for [[Assignment-1-Lexical-Semantic-Retrieval]]. The reasoning behind it
+(alternatives considered, rejected options, open questions) lives in [[decisions|decisions.md]].
 
 > [!info] New to this? Start with [[foundations|foundations.md]]
 > This doc assumes you know what an embedding, an inverted index, and recall@K are. If any of those
 > are unfamiliar — or you haven't done SMAI/iNLP — read [[foundations|foundations.md]] first; it
 > builds every term used here from scratch, and explicitly lists what you *don't* need to learn.
+
+> [!important] Design deliberation lives in [[decisions|decisions.md]] (moved 2026-08-25)
+> The *why* — the options the brief offers, alternatives rejected, open questions, and the drawbacks
+> of each choice — is in **[[decisions|decisions.md]]**, which is the file that converts into the Q6
+> design note. Part D here is now only the operational checks.
+>
+> Architecture changes are logged in [[plan/execution_plan_log|execution_plan_log.md]] as dated
+> entries, so this file needs no changelog of its own.
 
 **How this doc is ordered — easy to hard.** Read top to bottom on the first pass:
 
@@ -21,10 +29,12 @@ Working notes for [[Assignment-1-Lexical-Semantic-Retrieval]]. Two halves: **wha
 | **A · The idea** | The whole thing in plain words · vocabulary | Ordinary language, zero notation. Enough to explain A1 to a friend. |
 | **B · The shape** | Problem framing · how much pipeline · architecture · repo layout | What you're building, and how big it has to be. |
 | **C · The machinery** | Algorithms, formulas, metrics | The formal half. Each subsection opens in plain words, *then* gives the maths. |
-| **D · The judgement** | Decisions · ambiguities · failure modes · checks | What earns the marks. Return here repeatedly while building. |
+| **D · Operational checks** | Failure modes · pre-submission checklist | Symptoms to watch while building. Decisions moved to [[decisions\|decisions.md]]. |
+| **E · The data, measured** | Brief v1→v2 diff · MIND and EB-NeRD as profiled · submission path | The only part written from *observation* rather than the brief. Where it contradicts A–D, it wins. |
 
 Parts A and B are the first sitting. Part C is reference — read a subsection when you're about to
-implement it. Part D is where the grade actually lives.
+implement it. **Part E was added after profiling the real bundles (2026-08-21) and after brief v2
+landed** — read §E6 for what it invalidates above.
 
 ---
 
@@ -265,9 +275,10 @@ considered"* and *"ablation rigour"* — so additions are rewarded, **as long as
 - **Training or fine-tuning an embedding model.** Enormous compute, marginal insight. Note this is
   *not* the same as **running** a pre-trained encoder over the corpus — see the encoding-vs-training
   distinction under Embeddings below. Encoding is cheap and is what Q3 sanctions.
-- **Full-scale runs as your headline numbers.** EB-NeRD large is 600M+ impressions; the assignment
-  explicitly sanctions demo/small, and Q1.1 names "MIND-small and EB-NeRD demo/small". Large is
-  downloaded here and reserved for *one* scale-story measurement (Q6), not for the main results.
+- **Full-scale runs as your headline numbers.** Q1.1 still names "MIND-small and EB-NeRD demo/small"
+  as the pipeline's inputs, and only small-tier runs have labels to compute CIs over. Brief v2 makes
+  large *mandatory for the Codabench submission* — that is a prediction pass over an unlabelled test
+  set, not a source of headline metrics. Run large for Q5 and one Q6 anchor; report small.
 - **A serving API / web UI.** Zero marks. Not in the rubric.
 
 > [!tip] The rule of thumb
@@ -661,251 +672,16 @@ impression are correlated, and resampling them independently understates the int
 
 ---
 
-# Part D · The judgement — where the marks are
+# Part D · Operational checks
 
-Parts A–C describe a pipeline. **This part is what's actually graded.** The brief rewards
-*"alternatives considered and why you chose what you did"* — so the content below converts directly
-into the ≤4-page design note. Come back here repeatedly while building, not once at the end.
-
-## The decisions you must make consciously
-
-The design note is graded on **"alternatives considered and why you chose what you did."** These are
-the real forks — each is a genuine trade-off, not a right answer.
-
-### 1. Temporal split — where exactly does the boundary go?
-*Never random for interaction data.* But the specifics are yours:
-
-- How many days for test? Too few → noisy metrics; too many → stale training data given news decay.
-- **The subtle one:** a user's click history spans the boundary. If a test impression is at time *t*,
-  their history must be truncated to `< t` — not "all their clicks". This is exactly the leakage
-  Q9 tells you to test for.
-- **Compromise:** a strict boundary costs you signal on users whose history is mostly post-boundary.
-  Accept it, and say so.
-
-### 2. Query construction from click history
-The whole lexical approach rests on this, and it's underdetermined:
-
-- How many recent clicks — last 5? 10? All?
-- Weight recent clicks more (recency decay), or treat equally?
-- Concatenate titles only, or titles + abstracts? (Longer query → better recall, worse precision, slower.)
-- **Cold-start users have no history.** What's your fallback — popularity? category priors? random?
-  You need *an* answer; the slice analysis will expose it.
-
-### 3. Candidate generation vs. ranking
-Note that this assignment is **candidate generation only** (recall@K is the metric). The re-ranker
-is Component-2. So:
-
-- Optimise for **recall**, not precision. A K that seems absurdly large is correct here.
-- Resist building a ranker now — but design the interface so C-2 can slot one in.
-
-### 4. Embeddings: provided vs. computed — **decided: compute your own, keep one provided as baseline**
-
-- **Provided** (EB-NeRD ships Word2Vec, mBERT, XLM-R, contrastive vectors): fast, no GPU time, and the
-  contrastive ones are *click-trained*, so they're a strong reference.
-- **Your own** (mBERT/XLM-R forward pass): a coffee break on a local GPU, not a weekend — see the
-  encoding-vs-training callout in Part C.
-- **EB-NeRD is Danish** — an English-only model will silently underperform. Multilingual or Danish-specific.
-
-> [!important] The deciding argument is Q1's unified schema, not compute cost
-> **The provided embeddings are EB-NeRD-only — MIND ships no equivalent.** So "load for EB-NeRD,
-> compute for MIND" means your two datasets are encoded by *different models*, and Q3.5 ("compare
-> lexical vs. semantic — on which slices?") plus every cross-dataset claim becomes uninterpretable.
-> You would be measuring the encoder difference, not the dataset difference. Computing **both** with
-> one multilingual encoder is the only clean basis for comparison.
-
-**Ship:** own embeddings from a single multilingual encoder over both corpora — the headline
-semantic result.
-**Baseline row:** EB-NeRD's provided vectors, on EB-NeRD only, as a correctness check and an
-ablation. They are click-trained and *should* beat generic mBERT; **if your own vectors win, suspect
-a bug** (pooling, truncation, normalisation) rather than celebrating.
-
-This also strengthens the Q6 scale analysis: having actually run the encoder, you can report real
-throughput and memory for the embedding stage instead of speculating about it.
-
-### 5. ANN index vs. brute force
-- MIND-small / EB-NeRD demo are small enough for **brute force** — and brute force is *exact*, so it
-  gives you the recall ceiling to measure ANN against.
-- **Do both.** Brute force is your oracle; FAISS is your scale story. The gap between them *is* the
-  ablation, and "where it breaks at 10×" (Q6) writes itself.
-
-### 6. User representation for semantic retrieval
-Mean-pooling clicked-article embeddings is the suggested default. Its weakness: it blurs a user with
-several distinct interests into one meaningless centroid.
-
-- Alternatives: max-pool, recency-weighted mean, cluster the history and issue multiple queries.
-- **Compromise:** multi-query retrieval is better but costs K× the ANN lookups. Mention it as an
-  alternative even if you ship the mean.
-
-### 7. Scale — pick your bundle deliberately
-
-Demo → small → large lets you "dial scale gradually". **All four tiers are downloaded** (EB-NeRD
-demo + small, MIND small + large), so the choice is about where to spend time, not what's available.
-
-| Tier | Role | Use for |
-|---|---|---|
-| **EB-NeRD demo** (5K users) | smoke test | Does the pipeline run end to end? Every code change. |
-| **EB-NeRD small + MIND small** | **headline pair** | Every reported metric. Comparable size, both feasible locally. |
-| **MIND large** | scale story only | *One* Q6 measurement. Never the main results. |
-
-The headline pair is the important line: your cross-dataset claims are only meaningful if both sides
-are the same tier.
-
-> [!warning] EB-NeRD small and demo have **no test split**
-> Both ship `train/` and `validation/` only. Test impressions exist solely in `ebnerd_testset.zip`
-> (1.5 GB, not yet downloaded) — which is what Q5's mandatory EB-NeRD leaderboard submission needs.
-> Q1–Q4 are unaffected; plan the download before ~24 Aug.
-
-Q6 asks *where it breaks at 10×*, so you still need to have thought about:
-
-- Inverted index memory growth; when does it stop fitting in RAM?
-- ANN build time vs. query time as vectors grow.
-- Where the pipeline becomes I/O-bound rather than compute-bound.
-
-Measure at two scales (demo and small) and **extrapolate** — that's a legitimate scale analysis. With
-MIND-large downloaded you can optionally anchor the extrapolation with one real large-tier data point,
-which is stronger than pure projection.
-
-### 7b. Compute budget — local hardware, and why it's parameterised
-
-Measured on this machine: **i9-14900HX (24 cores / 32 threads), 31 GB RAM, RTX 4060 Laptop 8 GB
-VRAM, torch 2.5.1 + CUDA**, 134 GB free disk.
-
-**This is enough for all of C1 — Colab/Kaggle are not needed.** It beats free Colab on CPU and RAM;
-the only place it loses is VRAM (8 GB vs a T4's 16 GB), which matters for exactly one step:
-
-| Stage | Bound by | Local verdict |
-|---|---|---|
-| Data pipeline, temporal split | RAM + disk I/O | Comfortable |
-| BM25 / inverted index | CPU cores | Strong — far more cores than any free tier |
-| **Embedding forward pass** | **VRAM** | Fine at batch 32–64 in fp16; slower than a T4, still minutes |
-| ANN (brute force at ~120K × 768) | RAM | ~300 MB of vectors — trivial |
-| Eval + bootstrap CIs | CPU cores | Embarrassingly parallel; scales with cores |
-
-Reach for **Kaggle** (30 GB RAM, 12-hour sessions, no idle disconnect — better than free Colab) only
-if a MIND-large embedding run proves too slow locally. If you do, pull the data there from source
-rather than uploading — local upload throughput was measured at ~19 KB/s.
-
-> [!important] Never hardcode core or memory limits — take them as arguments
-> The machine is shared with other work. A run that grabs all 32 cores or all 31 GB will thrash
-> (observed: load average 26.5 and 9.5 GB of swap already in use while another job was running).
-> Every stage that parallelises or allocates in bulk must accept a budget:
+> [!info] The decision content that was here moved to [[decisions|decisions.md]] on 2026-08-25
+> Part D used to hold the ten design decisions, the mandated/authored/open tables, and the
+> alternatives-considered material. All of it now lives in **[[decisions|decisions.md]]**, updated
+> and extended, because that file is what converts into the Q6 design note.
 >
-> - `--n-jobs` / `n_jobs` in config — worker processes. **Cap, don't default to `os.cpu_count()`.**
-> - `--mem-gb` — memory ceiling, used to size batches and chunked reads rather than loading whole
->   parquet files.
-> - `--batch-size` — embedding batch, the VRAM dial, separate from host memory.
->
-> **Working default: 26 cores / 26 GB** — a sensible ceiling *on an idle machine*, leaving headroom
-> for the OS and editor. Both must be overridable per run, from CLI and from `configs/*.yaml`, and
-> the resolved values logged with every result so a number can be tied to the budget that produced it.
->
-> **Check availability before trusting the ceiling.** 26 GB is unusable when only 8 GB is free; a run
-> should read actual availability at startup and either scale down or refuse, not swap itself to death.
-
-### 8. Beyond-accuracy metrics pull against accuracy
-Diversity, novelty, and coverage genuinely trade off against nDCG. Recommending the same popular
-articles to everyone scores well on accuracy and terribly on coverage. Don't hide this — **quantify
-the trade-off**. It's one of the more interesting things you can put in the note.
-
-### 9. LLM-based text cleanup (e.g. the Yi models) — assessed and rejected
-
-**The idea:** instead of deterministic cleaning in `clean.py` (strip HTML, normalise whitespace,
-lowercase, handle encoding), use an open-weight LLM such as **Yi-6B/34B** (01.AI) to normalise
-article text — repair encoding damage, strip boilerplate, maybe summarise bodies before indexing.
-
-**The verdict: don't, for A1.** Four reasons, each independently sufficient:
-
-| Objection | Detail |
-|---|---|
-| **It breaks reproducibility — the Q1 requirement** | Q1.5 demands *one command rebuilds everything from raw files*. LLM generation is non-deterministic without pinned weights, seeds, and fixed decoding; and the cleanup step becomes hours of GPU rather than seconds. A grader cannot re-run it. |
-| **It silently corrupts your corpus** | An LLM rewriting article text will occasionally paraphrase, drop named entities, or hallucinate. **BM25 scores word overlap** — altering the words alters the ground truth of what the article says. You'd be measuring retrieval against a corpus the LLM invented. This is the same class of error as leakage: no crash, plausible numbers, wrong. |
-| **The datasets are already clean** | MIND and EB-NeRD are curated research benchmarks with structured title/abstract/body fields — not scraped HTML. The cleanup they need is tokenisation and whitespace normalisation. There is no mess for an LLM to fix. |
-| **Yi specifically is a poor pick in 2026** | 01.AI **halted pre-training in early 2025**; Yi Large (Nov 2024) was the final model. It's a frozen line, and it was never strong on **Danish** — which is exactly where EB-NeRD would need help. If you ever did want multilingual text repair, a current multilingual model would be the choice, not Yi. |
-
-> [!warning] The deeper principle — don't put a generative model inside a measurement pipeline
-> A1 measures retrieval quality. Every non-deterministic component between the raw data and the
-> metric is a source of variance you cannot attribute, and the bootstrap CI **will not catch it** —
-> it quantifies sampling noise, not corpus corruption. Keep the data path deterministic; put the
-> cleverness in the retriever, where you can ablate it.
-
-**Where an LLM *is* legitimately useful here** — outside the measured path:
-
-- **Writing the pipeline code** (expected by the course; logged in `ai-log.md`).
-- **Inspecting data** — "summarise what these 20 EB-NeRD rows contain" while exploring the schema.
-- **Translating Danish samples** so you can eyeball whether semantic retrieval is behaving.
-- **Drafting the design note**, then verifying every number yourself.
-
-None of these touch the corpus the metrics are computed over. That's the line.
-
-> [!tip] This is worth a sentence in the design note
-> "Considered LLM-based text normalisation (Yi/multilingual); rejected — non-deterministic under a
-> one-command rebuild requirement, and rewriting article text invalidates lexical scoring against
-> ground truth." Naming a rejected alternative *with a reason* is precisely the
-> "alternatives considered" rubric line. A rejection you can justify scores as well as an adoption.
-
-### 10. Metrics with and without serving-time-unavailable features (Q9)
-Some features you can compute offline aren't available when actually serving a recommendation. You
-must report **both** numbers. Decide early which features fall in this bucket so you're not
-retrofitting the comparison the night before.
-
-## Ambiguities, assumptions, and open decisions
-
-Three tiers. **Mandated** is quoted from the brief. **Authored** is a choice made in this document —
-defensible, but yours to change, and worth naming in the design note. **Open** needs your decision
-before code exists.
-
-### Mandated — the brief says so
-
-| Requirement | Where |
-|---|---|
-| Temporal split, never random | Q1.3 |
-| One-command rebuild | Q1.5 |
-| BM25 over title + abstract | Q2.1 |
-| recall@K for K ∈ {50, 100, 200} | Q2.4, Q3.4 |
-| ANN index (FAISS, ScaNN, **or brute-force for small scale**) | Q3.2 |
-| AUC, MRR, nDCG@5, nDCG@10 | Q4.1 |
-| Diversity, novelty, coverage | Q4.2 |
-| At least one slice | Q4.3 |
-| Bootstrap 95% CI per metric | Q4.4 |
-| Submit to both leaderboards | Q5 |
-| Metrics with **and without** serving-unavailable features | Q9 |
-| A test asserting the behaviour-window boundary | Q9 |
-
-Note Q3.2 explicitly sanctions brute force — so the "use brute force as primary" recommendation above
-is compliant, not a shortcut.
-
-### Authored — this document's choices, not requirements
-
-| Choice | Alternative | Why it's here |
-|---|---|---|
-| Four-stage architecture | Any other decomposition | Makes the shared-harness constraint visible |
-| Shared `Retriever` interface | Two independent scripts | Q4.5 requires one harness over both; an interface is the cleanest way |
-| Parquet feature store | CSV, SQLite, in-memory | Fast columnar reads; nothing in the brief requires it |
-| Repo layout with `src/`, `configs/` | Flat scripts | Convention, not requirement |
-| Recency-weighted mean as ship default | Plain mean (brief's suggestion) | News decay; plain mean is the ablation |
-| RRF for fusion | Weighted score sum | Avoids BM25 score-normalisation fragility |
-| `Makefile` targets | Shell scripts, `just` | Q1.5 says "e.g. `make data`" — an example, not a mandate |
-| Own embeddings as headline, provided as baseline | Provided as headline | MIND ships no provided vectors; one encoder over both is the only comparable basis (decision 4) |
-| Resource budget as CLI/config args | Hardcoded `os.cpu_count()` | Shared machine; caps must be tunable per run and logged with results (decision 7b) |
-
-### Open — you must decide, and the brief won't tell you
-
-| Question | Why it's genuinely undecided | Consequence of getting it wrong |
-|---|---|---|
-| **How many days in the test split?** | Q1.3 says "e.g. last N days" — N is unspecified | Too few → noisy CIs; too many → stale training data given news decay |
-| **What counts as "cold-start"?** | Q4.3 says "few clicks" without a threshold | Your slice boundary determines your headline finding; pick and justify (< 5 clicks is common) |
-| **Which features are "unavailable at serving time"?** | Q9 requires the comparison but never defines the set | The whole Q9 comparison rests on this. Candidates: full-day impression counts, future article popularity, anything aggregated over the test window |
-| **How much click history per query?** | Unspecified | Long → better recall, diffuse BM25 scores, slower. Short → sharper but misses interests |
-| **What is "recency" numerically?** | Named as an axis, never quantified | Needs a concrete decay constant or window; pick one and sweep it |
-| **Cold-start fallback strategy** | Not addressed by the brief at all | Users with no history return nothing without a fallback. Popularity? Category prior? Random? An empty result is a legitimate choice **only if you state it** |
-| **Do multiple clicks in one impression count as multiple positives?** | Affects recall denominator and MRR | Changes every number; decide once and state it |
-| **Use session context, or history only?** | The brief names session context as a behavioural signal; this pipeline uses only historical clicks | Needs a session boundary definition. EB-NeRD ships session IDs; MIND needs reconstruction from impression timestamps (e.g. a 30-min inactivity gap). Ignoring it is defensible for C1 — **but C2 is explicitly click-log modelling, so it lands there regardless** |
-| **Deduplicate query terms?** | Unspecified | Repeated titles inflate term frequencies in the concatenated query |
-
-> [!warning] The Q9 feature set is the most-underestimated item here
-> "Report metrics with and without features unavailable at serving time" only means something once you
-> have decided which features those are. Decide it in week one, not the night before — retrofitting the
-> comparison means re-running everything.
+> What remains below is **operational**: the symptoms to watch for while building, and the
+> pre-submission checklist. Those belong with the architecture because they describe the system,
+> not the reasoning behind it.
 
 ## Failure modes to watch
 
@@ -927,6 +703,286 @@ is compliant, not a shortcut.
 - [ ] Both leaderboards have a submission and a screenshot
 - [ ] `.gitignore` covers `*.zip`, `*.pt`, `*.ckpt`, `__pycache__/`, `data/`
 - [ ] AI usage log is assembled (required deliverable — start it now, not at the end)
+- [ ] Submission files cover **every** impression id in the large test set (2,370,727 MIND /
+      13,336,711 EB-NeRD) — a short file is rejected, not partially scored
+
+---
+
+# Part E · What the data actually looks like
+
+Everything above Part E was written from the brief. **This part is measured** — from
+`Assignment1_v2.pdf` and from the two exploration notebooks (`mind_analysis.ipynb`,
+`ebnerd_analysis.ipynb`) run on the downloaded bundles on 2026-08-21. Where a number here contradicts
+an assumption earlier in the doc, this part wins.
+
+> [!important] Nothing in this part is a retrieval metric
+> These are dataset statistics and one popularity baseline that has **not been scored offline or on
+> the leaderboard**. No recall@K, nDCG, or CI is claimed anywhere below. Per the subject rule, a
+> number you did not run does not go in a note — so the baseline's quality is simply unknown at time
+> of writing.
+
+## E1 · What changed between brief v1 and v2
+
+`Assignment1_v1.pdf` → `Assignment1_v2.pdf`. **Q1–Q9, the deliverables, the rubric, the due date
+(2026-08-27) and the references are byte-identical.** Every change is in the datasets/logistics
+section on pages 1–2, and every change pushes in one direction: *the large bundles are now required.*
+
+| # | v1 | v2 |
+|---|---|---|
+| 1 | EB-NeRD described as demo/small/large "to dial scale gradually" | Adds: **`ebnerd_large.zip` + `ebnerd_testset.zip` required for Codabench**; test set is **13.5M impressions with no click labels** |
+| 2 | MIND described as ~1M users, MIND-small for fast iteration | Adds: **`MINDlarge_test.zip` required for Codabench**; **2.37M impressions, no click labels** |
+| 3 | — | New **Important** callout: "Large datasets are required for Codabench submissions… the test sets used by both leaderboards come from the large bundles only. Make sure to download the large test sets early — they are several GB each." |
+| 4 | EB-NeRD download block: demo/small + optional embeddings | Adds a **LARGE set** block: `ebnerd_large.zip`, `articles_large_only.zip`, `ebnerd_testset.zip` |
+| 5 | MIND download: two `wget` lines for `MINDsmall_train/dev` | Switched to **`hf download yjw1029/MIND --repo-type dataset`**, and names `MINDlarge_test.zip` (submission) and `MINDlarge_train/dev.zip` (full-scale training) |
+| 6 | Compute: "MIND-small and EB-NeRD demo run on a single free GPU in a few hours." | Same, plus: **"ensure your prediction pipeline is memory-efficient (use Polars, PyArrow, or batch processing)"** — citing the 13.5M / 2.37M test sizes |
+
+**Read it as:** v2 does not change *what you build*; it changes *what you must run it over at the
+end*. Three consequences for this document:
+
+- Decision 7 above is amended — large is mandatory-for-submission, not optional-for-scale.
+- The prediction path (Q5) becomes a **streaming/batched** component, not an afterthought. v2 names
+  Polars and PyArrow explicitly; both notebooks were written that way (§E4).
+- The download is on the critical path — "several GB each", and the due date did not move.
+
+> [!note] Worth one line in the design note
+> The brief itself now prescribes a memory strategy. Saying "prediction is batched by parquet row
+> group because the test set is 13.5M impressions and does not fit in RAM" is a design decision with
+> a stated cost — exactly the shape the rubric wants — and it is now traceable to the brief.
+
+## E2 · MIND, as measured
+
+TSV, English, Oct–Nov 2019. Four files per split: `behaviors.tsv`, `news.tsv`,
+`entity_embedding.vec`, `relation_embedding.vec`.
+
+| | MINDsmall_train | MINDsmall_dev | MINDlarge_test |
+|---|---|---|---|
+| behaviors rows | 156,965 (92 MB) | 73,152 (43 MB) | **2,370,727 (1.46 GB)** |
+| unique users | 50,000 | 50,000 | 702,005 |
+| news.tsv articles | 51,282 | 42,416 | 120,961 |
+| entity embeddings | 26,904 | 22,893 | 46,807 |
+| impression window | 11/09 – 11/14/2019 | 11/15/2019 (one day) | 11/16 – 11/22/2019 |
+| click labels | ✅ `-1`/`-0` | ✅ | ❌ **none** |
+
+**Train-split distributions** (the numbers that shape query construction and the cold-start slice):
+
+- History length: mean 32.6, median 19, max 558 articles.
+- Candidates per impression: mean 37.2, median 24, max 299.
+- Click rate per impression: **0.1085** — i.e. ~4 clicks in a 37-article slate.
+- **Null history (cold-start): 3,238 rows = 2.1% of train.** Dev/test users are warmer (test history
+  mean 41.6, max 1,021).
+
+> [!warning] The cold-start slice is small in MIND — 2.1% by the null-history definition
+> Slicing on "history is literally absent" gives you ~3.2K impressions in train, which will produce a
+> wide CI and a weak finding. The open decision "what counts as cold-start" (< 5 clicks is the common
+> threshold) now has a concrete reason to prefer the *threshold* definition over the *null* one: the
+> null slice is too thin to say anything with.
+
+**Schema notes that affect the pipeline:**
+
+- `news.tsv` has 8 columns: `news_id, category, subcategory, title, abstract, url, title_entities,
+  abstract_entities`. **No header row; use `quote_char=None`** — the text fields contain bare quotes.
+- **`abstract` is 5.2% null.** Q2.1 mandates BM25 over title + abstract, so ~2.7K articles are
+  title-only. Decide the fallback (title alone) rather than indexing an empty string.
+- **No body text at all.** MIND ships URLs (many expired); the crawler in the MIND repo is the only
+  route to bodies and is not worth the time. This is a hard asymmetry vs. EB-NeRD, which ships full
+  bodies — a cross-dataset claim about body-text retrieval is not available.
+- Entities are JSON per row: `Label`, `Type`, `WikidataId`, `Confidence`, `OccurrenceOffsets`,
+  `SurfaceForms`.
+- 17 categories (`news` 15,774 and `sports` 14,510 dominate; `northamerica` has 1 article),
+  and the subcategory tail is long — relevant to the coverage metric.
+- `history` is **inline** in each behaviors row as space-separated news ids.
+
+> [!warning] The `time` column is a string in US format and does not sort
+> `"11/11/2019 9:05:58 AM"`. Taking `min()`/`max()` on the raw strings in the notebook returned
+> `11/10/2019 10:00:00 AM` to `11/9/2019 9:59:58 AM` — a lexicographic artefact, not a real range.
+> **Parse to datetime before any temporal split**, or the leakage boundary will be silently wrong,
+> which is precisely the failure mode Q9 exists to catch.
+
+## E3 · EB-NeRD, as measured
+
+Parquet, Danish, May–Jun 2023. Splits carry `behaviors.parquet` + `history.parquet`; `articles.parquet`
+is shared.
+
+| | large/train | large/validation | testset/test |
+|---|---|---|---|
+| behaviors rows | 12,063,890 | 12,566,385 | **13,536,710** |
+| unique impression ids | 12,063,890 | — | **13,336,711** (⚠ fewer than rows) |
+| users | 788,090 | 791,582 | 807,677 |
+| window | 2023-05-18 → 05-25 | 2023-05-25 → 06-01 | 2023-06-01 → 06-08 |
+| avg articles in view | 11.09 | 11.95 | 15.21 |
+| columns | 17 | 17 | **14** |
+
+**Read it as:** three consecutive, non-overlapping one-week windows. The dataset's own split is
+already temporal, which is a useful cross-check on your own `split.py` boundary.
+
+> [!warning] Test has 13,536,710 rows but only 13,336,711 unique impression ids
+> ~200K impression ids repeat. The submission format is one line per impression id, so a naive
+> row-wise write produces duplicate lines. Deduplicate on `impression_id` — the notebook's
+> `group_by("impression_id")` does this implicitly and wrote exactly 13,336,711 lines.
+
+**Columns present in train/val but absent from test** — this is the Q9 "unavailable at serving time"
+question answered for you by the dataset itself:
+
+| Column | Why it's gone |
+|---|---|
+| `article_ids_clicked` | the label |
+| `article_id` | the clicked article — also the label |
+| `next_read_time`, `next_scroll_percentage` | **future information** |
+
+Test adds one column: **`is_beyond_accuracy`** (bool) — **1.48%** of test impressions, flagging the
+subset the leaderboard scores for diversity/novelty/coverage.
+
+> [!important] `next_read_time` / `next_scroll_percentage` are the concrete Q9 feature set
+> Q9 asks for metrics *with and without features unavailable at serving time* and never defines the
+> set (it's listed as an open decision above). EB-NeRD defines it empirically: the four columns the
+> organisers removed from test are exactly the ones unavailable at serving time, and two of them
+> (`next_*`) are pure future-information. **Adopt the dataset's own boundary as your definition** and
+> say so — it is defensible, checkable, and costs no argument. MIND has no equivalent signal, so the
+> Q9 comparison is an EB-NeRD-only result; state that rather than inventing a MIND analogue.
+
+**`articles.parquet` — 125,541 rows, 21 columns**, richer than MIND on every axis but entities:
+
+- Full `body`, `title`, `subtitle` — **all 0% null.**
+- `sentiment_score` (0.34–1.0) + `sentiment_label`: Negative 61,130 / Neutral 44,001 / Positive
+  20,410. A tabloid corpus skews negative.
+- `category_str`: 33 values — `nyheder` 27,876, `underholdning` 24,909, `krimi` 22,579, `sport`
+  18,767, then a long tail down to single-article categories.
+- `article_type`: 16 values, but `article_default` is 115,251 of 125,541 (92%).
+- `premium` (paywall): 10,160 = 8.1%.
+- **`total_inviews` 85.4% null, `total_pageviews` / `total_read_time` 86.5% null** — popularity stats
+  exist only for recent articles. A popularity prior built from these covers ~1 article in 7.
+- `published_time` spans **1993-09-15 → 2023-07-11** — the corpus contains a 30-year archive, while
+  impressions cover one week. Recency features must handle articles decades older than the impression.
+
+**Behaviours, train:** 6,227,464 sessions; `article_id` null 8,458,027/12,063,890 (**70%** — set only
+on a click); `scroll_percentage` null 71%; **`gender`/`postcode`/`age` ~97% null**; `is_sso_user`
+11%, `is_subscriber` 7%. Clicks per impression: 12,004,156 impressions have exactly 1, tailing to 10.
+Device: desktop 7.59M, mobile 4.11M, tablet 363K.
+
+> [!note] Demographics are unusable, and that is worth stating
+> 97% null on gender/age/postcode means no demographic feature is learnable. The open decision list
+> can drop it: cold-start fallback must be popularity- or category-based, because there is no user
+> attribute to fall back on.
+
+**`history.parquet`, train:** 788,090 users, four parallel lists per user
+(`impression_time_fixed`, `article_id_fixed`, `scroll_percentage_fixed`, `read_time_fixed`).
+History length mean **158.8**, median **92**, min 5, max 2,696.
+
+> [!warning] Correction to an earlier assumption
+> A "avg 144 articles" figure appears in the EB-NeRD notebook's prose summary; the computed value in
+> the same notebook is **158.84 mean / 92 median**. Use the computed pair — and prefer the **median**,
+> since the mean is dragged by a 2,696-article tail. EB-NeRD histories are ~5× longer than MIND's
+> (median 92 vs 19), so "how much click history per query" cannot have one answer across both
+> datasets; it must be a config value, swept per dataset.
+
+## E4 · The two datasets side by side
+
+| Feature | MIND | EB-NeRD |
+|---|---|---|
+| Language | English | Danish |
+| Format | TSV (no header) | Parquet |
+| Article body | ❌ (URLs expired) | ✅ full text |
+| Title / abstract-subtitle | ✅ / ✅ (5.2% null) | ✅ / ✅ |
+| Category | 17 + subcategory | 33 + subcategory list |
+| Entities | ✅ Wikidata-linked JSON + **TransE 100-dim embeddings** | ✅ `ner_clusters`, `entity_groups`, `topics` — no embeddings shipped |
+| Sentiment | ❌ | ✅ score + label |
+| Popularity stats | ❌ | ✅ but 85%+ null |
+| Read time / scroll % | ❌ | ✅ |
+| Session id | ❌ (must be reconstructed) | ✅ |
+| Demographics | ❌ | ✅ but ~97% null |
+| User history | inline in behaviors | separate `history.parquet` |
+| Beyond-accuracy flag | ❌ | ✅ `is_beyond_accuracy` (1.48% of test) |
+| Submission format | **identical:** `impression_id [rank_order]` | **identical** |
+
+> [!important] The asymmetry that constrains the design
+> The only features present in **both** datasets are title, abstract/subtitle, category, and click
+> history. **The unified schema in `clean.py` should be exactly that intersection** — everything else
+> becomes an optional per-dataset column that no shared component may depend on. This retroactively
+> justifies the decision-4 choice of one multilingual encoder: MIND's TransE entity vectors and
+> EB-NeRD's provided vectors have no counterpart on the other side, so neither can carry a
+> cross-dataset claim.
+
+Note also that **MIND's entity embeddings are the one axis where MIND is richer** — 100-dim TransE
+vectors over Wikidata, usable for knowledge-aware retrieval (the DKN line of work). That is a
+MIND-only ablation if you want one, not a shared component.
+
+## E5 · The submission path, verified end to end
+
+Both leaderboards take **the same format**: one line per impression,
+`impression_id [rank1,rank2,...,rankN]`, where the ranks are a permutation of 1..N aligned to the
+candidate list *in its original order*, rank 1 = most likely click. Zip the `.txt` and upload.
+
+```mermaid
+flowchart TD
+    subgraph OFF["Offline — from labelled train"]
+        TR["train behaviors<br>labelled clicks"] --> POP["click counts per article"]
+    end
+    subgraph ON["Prediction — over unlabelled large test"]
+        T["test behaviors<br>batched: parquet row group<br>or 200K-row slice"] --> EX["explode candidate list<br>keep original position"]
+        POP --> JOIN["left-join score<br>fill null with 0"]
+        EX --> JOIN
+        JOIN --> RK["rank over impression_id<br>method = ordinal, descending"]
+        RK --> RG["regroup by impression_id<br>restore original order"]
+    end
+    RG --> W["write line per impression<br>then zip"]
+    W --> CB["Codabench<br>⚠ not yet scored"]
+    style CB fill:#fef7e0,stroke:#f9ab00,color:#000
+```
+
+**Read it as:** score offline, then stream the test set through in batches — the only per-row work is
+the file write, everything else is vectorised. The pattern is retriever-agnostic: swapping the
+popularity join for a BM25 or ANN score changes one node.
+
+**Measured cost of the popularity baseline** (the run that exists; quality unknown):
+
+| | MIND | EB-NeRD |
+|---|---|---|
+| Batching | 12 × 200K-row slices | 51 parquet row groups + `gc.collect()` |
+| Lines written | 2,370,727 | 13,336,711 |
+| `.txt` | 291.3 MB | ~1.5 GB |
+| `.zip` | **28.1 MB** | **199.5 MB** |
+| Articles with any click signal | 7,713 of 120,961 test articles | 4,766 of 125,541 |
+
+> [!warning] The popularity prior covers ~4–6% of the corpus
+> Only 7,713 MIND / 4,766 EB-NeRD articles were ever clicked in train, so almost every test candidate
+> joins to null and is scored 0. With `rank(method="ordinal")` the entire zero-scored mass is ranked
+> by **arbitrary tie-break order**, which is why the first MIND prediction line is the identity
+> permutation `[1,2,...,16]`. The baseline is therefore "popularity where known, original slate order
+> otherwise" — closer to a slate-order baseline than a popularity one. Say that when you report it,
+> and consider a random tie-break so the number is honest about being uninformed.
+
+Practical notes from the runs:
+
+- **Rank alignment is the bug to fear.** The output permutation must line up with the candidate list
+  as it appeared in the source row. Both notebooks sort by `[impression_id, pos]` before and after
+  the windowed rank for exactly this reason. A misalignment scores as noise and looks like a bad model.
+- **`explode` + `empty_as_null`** emits a Polars deprecation warning; behaviour changes in Polars 2.0.
+  Pin the polars version in `requirements.txt` (measured on **1.43.2**) or set the flag explicitly.
+- The MIND repo's `sample_pred/prediction.txt` and EB-NeRD's `predictions_large_random/` are the
+  format references — diff your first five lines against them before uploading.
+- 199.5 MB is a large upload; check the leaderboard's size cap before the deadline, not on 27 Aug.
+
+> [!question] Not yet done — the honest gap
+> Neither prediction file has been submitted, and neither baseline has been evaluated offline against
+> dev/validation. Until it is, there is **no number** for this pipeline — the popularity baseline is a
+> plumbing test that proves the format and the memory strategy, nothing more. Its value is that it
+> de-risks Q5 early; it is not a result.
+
+## E6 · What this changes upstream
+
+| Earlier in this doc | Amended by |
+|---|---|
+| Decision 7: "MIND large — scale story only" | v2 makes large mandatory for Q5 (§E1) |
+| "ebnerd_testset.zip not yet downloaded" | Downloaded and profiled (§E3) |
+| Open decision: "which features are unavailable at serving time?" | Answered by EB-NeRD's test schema: `article_id`, `article_ids_clicked`, `next_read_time`, `next_scroll_percentage` (§E3) |
+| Open decision: "what counts as cold-start?" | Null-history is only 2.1% of MIND — use a click-count threshold instead (§E2) |
+| Open decision: "how much click history per query?" | Must be per-dataset: MIND median 19, EB-NeRD median 92 (§E3) |
+| Open decision: "cold-start fallback strategy" | Cannot be demographic — those columns are ~97% null (§E3) |
+| Q5 as a formatting step | It is a streaming component with its own memory design (§E5) |
+| Unified schema scope | Should be the intersection: title, abstract/subtitle, category, history (§E4) |
+
+Still open, and unaffected by anything measured here: number of days in the test split, the recency
+decay constant, multi-click positives, session context, query-term deduplication.
 
 ---
 [[Assignment-1-Lexical-Semantic-Retrieval|← tracking note]] · [[Claude-Code-Toolkit/09-ire-workflows|Workflows]]

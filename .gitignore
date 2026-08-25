@@ -23,3 +23,16 @@ venv/
 
 # OS / editor
 .DS_Store
+
+# Prediction files -- hundreds of MB of text, regenerable in ~15 min by
+# `make submit`. Q8 bars large files. The .meta.json beside each IS tracked:
+# it records the retriever, params, line count and budget that produced the
+# file, which is what makes a leaderboard score traceable.
+submissions/*.txt
+submissions/*.zip
+
+# LaTeX build artefacts -- the .tex and .pdf are tracked, the rest is derived.
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc

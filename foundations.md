@@ -240,60 +240,277 @@ These are the domain words the brief uses without defining.
 
 ---
 
-## 5 · How you know if it worked — metrics without the statistics course
+## 5 · How you know if it worked — the evaluation metrics, built up
 
-### recall@K — your primary metric
+This is the longest section here, deliberately. **Q4 is the part of the assignment where the marks
+actually live**, and every metric below has a *need* (what goes wrong without it), a *why* (what it
+measures that nothing else does), and a *how* (the arithmetic, on numbers small enough to check by
+hand).
 
-> Of the articles the user actually clicked, what fraction appeared in your top-K shortlist?
+Read it once now. Come back to a single subsection when you implement it.
 
-Clicked 2 articles, 1 was in your top-100 → recall@100 = 0.5. Average over all impressions. Position
-inside the shortlist is **irrelevant** — that's the point of candidate generation.
+### 5.0 · Why "did it work?" is a harder question than it looks
 
-**Sanity check that catches real bugs:** recall@200 can *never* be less than recall@50, because the
-top-200 contains the top-50. If you see otherwise, you have a bug — not a finding.
+You have a retriever. It returns articles. Did it do well?
 
-### The ranking metrics, in one line each
+The naive answer — "count how often the clicked article came back" — falls apart immediately:
 
-The brief also requires these (they're rank-aware, unlike recall):
+- A user shown 11 articles who clicks 1: is getting that 1 into a top-**200** list impressive? (No.)
+- A retriever that returns the same 10 popular articles to everyone will be right surprisingly
+  often. Is it good? (No — but accuracy alone says yes.)
+- You measured 0.42 on 800 impressions. Is that better than 0.39? (**Unanswerable without a CI.**)
 
-- **AUC** — pick one clicked and one ignored article at random; how often did you score the clicked
-  one higher? 0.5 = coin flip, 1.0 = perfect.
-- **MRR** — how far down is the *first* correct answer? Position 1 → 1.0, position 4 → 0.25.
-- **nDCG@k** — like MRR but credits *every* relevant result, discounted by position, then normalised
-  so users with different click counts are comparable.
+Each of those three failures is why one family of metrics exists:
 
-Formulas in [[architecture#The evaluation metrics — what each one actually measures|architecture.md
-§Metrics]]. Use a library; understand the one-liners.
+```mermaid
+flowchart TD
+    Q["Did the retriever work?"]
+    Q --> A["Did the right article<br>make the shortlist?"]
+    Q --> B["Was it near the top?"]
+    Q --> C["Is the result set<br>actually useful?"]
+    Q --> D["Is the difference real,<br>or noise?"]
+    A --> A1["recall@K<br>CORPUS regime"]
+    B --> B1["AUC · MRR · nDCG<br>SLATE regime"]
+    C --> C1["diversity · novelty<br>coverage"]
+    D --> D1["bootstrap CI"]
+    style A1 fill:#e8f0fe,stroke:#4285f4,color:#000
+    style B1 fill:#f3e8fd,stroke:#a142f4,color:#000
+    style C1 fill:#e6f4ea,stroke:#34a853,color:#000
+    style D1 fill:#fef7e0,stroke:#f9ab00,color:#000
+```
 
-### Beyond-accuracy metrics — why "correct" isn't "good"
+**Read it as:** four different questions, four families of metric. Reporting one family and calling
+it "the results" answers a quarter of the question.
 
-Recommending the 10 most popular articles to everyone scores decently on accuracy and is a **useless
-product**. So you also measure:
+### 5.1 · The two regimes — the distinction that causes the most confusion
 
-- **Diversity** — are the 10 results 10 different stories, or one story 10 times?
-- **Novelty** — are you surfacing anything they couldn't have found alone?
-- **Coverage** — across all users, how much of the catalogue ever gets recommended?
+Before any formula. **The same retriever gets measured against two different candidate sets**, and
+mixing them up produces numbers that look fine and mean nothing.
 
-These genuinely **fight** accuracy. Measuring that tension is a finding worth reporting — and the
-course's spine is *"every design claim names its trade-off."*
+| | **Corpus regime** | **Slate regime** |
+|---|---|---|
+| Candidates | **every article** (21K–65K) | just the **~11 shown in that impression** |
+| Question | *Did the clicked article survive the cut?* | *Did you rank the clicked one above the others shown?* |
+| Metric | recall@K | AUC, MRR, nDCG |
+| Who cares | candidate generation — this assignment | the leaderboard — Codabench scores this |
 
-### The bootstrap — error bars without statistics theory
+**Why both exist.** Your retriever's job (Q2/Q3) is narrowing thousands of articles to a few hundred
+— that's the corpus regime, and recall@K is its natural metric. But Codabench hands you an
+impression's slate and asks you to *order* it. So you take your corpus-wide scores, keep only the
+articles in that slate, and sort. Same retriever, two measurements.
 
-You measured recall@100 = 0.42 on 5,000 impressions. Would a *different* 5,000 have given 0.42, or
-0.31? You can't collect more data, so you **fake it**:
+> [!warning] An AUC of 0.99 usually means you measured the wrong regime
+> If you compute AUC over the whole corpus rather than the slate, almost every article is a
+> "negative" and trivially ranks below the click. The number looks spectacular and means nothing.
+> **Always say which regime a number belongs to** — our results tables carry a `regime` column for
+> exactly this reason.
 
-1. Draw 5,000 results **from the ones you have, with repeats allowed**. Average them.
-2. Do that 1,000 times → 1,000 plausible re-runs of your experiment.
-3. The middle 95% of those averages is your **95% confidence interval**.
+### 5.2 · recall@K — your primary metric
 
-You report `recall@100 = 0.42 [0.39, 0.45]`. No distributions, no t-tests — just resampling in a
-loop. That's the whole technique, and the subject convention is that **every number in your notes
-carries its CI**.
+**The need.** Candidate generation can fail in one fatal way: the article the user clicked never
+makes the shortlist. Once it's missing, no downstream re-ranker can recover it. Everything else is
+recoverable; this isn't.
+
+**The why.** recall@K ignores position entirely, and that is *correct here*. Getting the right
+article to position 180 of 200 is a total success for a candidate generator — position is the
+re-ranker's job (Component-2).
+
+**The how.**
+
+$$\text{recall@K} = \frac{|\{\text{clicked articles}\} \cap \{\text{top-K retrieved}\}|}{|\{\text{clicked articles}\}|}$$
+
+Worked: the user clicked 2 articles. Your top-100 contains 1 of them.
+recall@100 = 1/2 = **0.5**. Average that over every impression.
+
+Since 99.5% of our impressions have exactly one click, in practice each impression scores **1.0 or
+0.0**, and the average is "the fraction of impressions where we found it."
+
+The brief fixes **K ∈ {50, 100, 200}** exactly.
+
+> [!warning] The bug this catches for free
+> **recall@200 can never be less than recall@50** — a top-200 list contains the top-50. If you see
+> otherwise, you have a bug in K handling or hit counting, not a finding. We assert this in a test.
+
+> [!note] A flat recall curve is not always a bug
+> If recall@50 = recall@100 = recall@200 exactly, the usual cause is that your retriever **returned
+> fewer than 50 results**. We hit this: a 24-hour recency window admits only ~132 of 20,738 articles,
+> so lists averaged 7 results at K=50. The window, not K, was binding. Log the realised list length
+> beside recall and this diagnoses itself.
+
+### 5.3 · The rank-aware metrics — AUC, MRR, nDCG
+
+All three operate on the **slate** (§5.1). All three answer "is the good stuff near the top?", but
+they disagree about what "near the top" is worth.
+
+#### AUC — the pairwise view
+
+**The need.** recall@K is blind to order. You need something that says whether clicked articles
+generally outrank ignored ones.
+
+**The why.** AUC has an unusually clean interpretation: *pick one clicked article and one ignored
+article at random — how often did you score the clicked one higher?* 0.5 is a coin flip, 1.0 is
+perfect, below 0.5 means you're anti-correlated with reality.
+
+**The how.** Don't enumerate pairs; use the rank-sum identity:
+
+$$\text{AUC} = 1 - \frac{\sum_{i \in \text{pos}} r_i - \frac{n_{\text{pos}}(n_{\text{pos}}+1)}{2}}{n_{\text{pos}} \cdot n_{\text{neg}}}$$
+
+where $r_i$ are the 1-indexed ranks of the clicked articles in your ordering.
+
+Worked, slate of 4, one click at position 2: $n_{pos}=1$, $n_{neg}=3$, rank sum = 2.
+AUC $= 1 - (2 - 1)/3 = 2/3 \approx 0.67$. Two of the three ignored articles fell below the click.
+
+> [!warning] AUC is **undefined** when a slate is all-clicks or no-clicks
+> With no negatives there is no pair to compare. The tempting fix — call it 0.5 — quietly injects a
+> fabricated value into your average. **Drop those impressions and report how many you dropped.**
+
+#### MRR — how far to the first hit
+
+**The need.** Users don't read to position 40. The first correct answer's position is what they
+experience.
+
+**The why/how.** $\text{MRR} = \frac{1}{\text{rank of first hit}}$, averaged. Position 1 → 1.0,
+position 2 → 0.5, position 4 → 0.25, never found → 0.
+
+MRR ignores everything after the first hit — irrelevant for us, since almost every impression has
+exactly one click. **With single-click impressions, MRR is essentially recall@1 generalised.**
+
+#### nDCG@k — position-discounted credit, normalised
+
+**The need.** MRR only counts the first hit; recall counts hits with no position credit. nDCG does
+both: every relevant result contributes, discounted by how far down it sits.
+
+**The why "n".** Raw DCG isn't comparable between users — someone with 5 clicks can score higher than
+someone with 1 just by having more to find. Dividing by the *ideal* DCG (the best possible ordering
+of the same relevance set) normalises to [0, 1].
+
+**The how**, with binary relevance (clicked = 1, not = 0):
+
+$$\text{DCG@k} = \sum_{i=1}^{k} \frac{rel_i}{\log_2(i+1)}, \qquad \text{nDCG@k} = \frac{\text{DCG@k}}{\text{IDCG@k}}$$
+
+The usual $2^{rel}-1$ gain reduces to 1/0 when relevance is binary — worth stating so the graded
+form is unambiguous.
+
+Worked, slate of 3, one click at position 2:
+DCG $= 1/\log_2(3) = 0.631$. Ideal puts it first: IDCG $= 1/\log_2(2) = 1.0$.
+nDCG = **0.631**.
+
+> [!important] Why nDCG@5 and nDCG@10 will look almost identical here
+> EB-NeRD slates average **11–12 articles**. nDCG@10 therefore covers nearly the whole slate, so it
+> and nDCG@5 measure almost the same thing. Expect them to correlate strongly — that's the data, not
+> a bug, and presenting them as independent evidence would be overclaiming.
+
+> [!warning] The reference row you must not omit
+> We measured **random** ranking scoring nDCG@10 = 0.42 on EB-NeRD. Not because random is good — because
+> an 11-item slate with one click is an easy thing to score well on by luck. **Any slate-regime table
+> without a random baseline row is misleading**, because 0.46 looks respectable until you know the
+> floor is 0.42.
+
+### 5.4 · Beyond-accuracy — why "correct" isn't "good"
+
+**The need.** Recommend the 10 most popular articles to everyone. Accuracy: decent. Product: useless.
+Accuracy metrics cannot see this failure at all.
+
+**Intra-list diversity** — are the K results K different stories, or one story K times?
+
+$$\text{ILD} = \frac{2}{k(k-1)}\sum_{i<j}\left(1 - \text{sim}(d_i, d_j)\right)$$
+
+We use **category** for similarity rather than embeddings. Not laziness — scoring an embedding
+retriever with embedding similarity is circular, measuring the retriever against its own objective.
+
+**Novelty** — are you surfacing anything the user couldn't have found alone? Self-information of
+what you recommend:
+
+$$\text{novelty} = \frac{1}{k}\sum_i -\log_2 p(d_i)$$
+
+$p(d)$ is the article's click share **in the train split only**. Using the evaluation period's
+popularity is leakage — and the kind that flatters you.
+
+**Coverage** — across all users, what fraction of the catalogue ever gets recommended?
+
+> [!important] These genuinely fight accuracy — and that tension is the finding
+> Measured on EB-NeRD: adding the 24-hour recency window multiplied recall by 33× and **cut coverage
+> by 46×** (0.5037 → 0.0110). Popularity's novelty (8.64 bits) sits 4 bits below everything else,
+> because it recommends exactly what everyone already clicked.
+>
+> Also measured: **random has the highest diversity of any retriever.** Diversity alone is not a
+> quality signal — it must always be read next to an accuracy column.
+
+### 5.5 · The bootstrap — error bars without a statistics course
+
+**The need.** You measured recall@100 = 0.42 on 800 impressions. Another 800 impressions would have
+given a slightly different number. Is 0.42 meaningfully better than 0.39, or is that just which
+impressions you happened to evaluate?
+
+Without an answer, **you cannot compare two retrievers at all** — which is most of what Q3.5 asks.
+
+**The why.** Classical statistics would need assumptions about the distribution. Metrics like recall
+are bounded in [0,1] and skewed, so the normal approximation is wrong. The bootstrap assumes nothing.
+
+**The how**, the entire technique:
+
+1. You have 800 per-impression scores. Draw **800 of them at random, with repeats allowed**. Average.
+2. Repeat 1,000 times → 1,000 plausible re-runs of your experiment.
+3. Sort those 1,000 averages. The **2.5th and 97.5th percentiles** are your 95% CI.
+
+Report `recall@100 = 0.42 [0.39, 0.45], n = 800`. No t-tests, no distributions — just resampling.
+
+**Reading a CI:** if two retrievers' intervals **don't overlap**, the difference is real. If they
+overlap substantially, you cannot claim one is better — no matter how different the point estimates
+look. We used exactly this to conclude BM25 and popularity are indistinguishable on EB-NeRD.
+
+> [!warning] Resample **impressions**, not predictions
+> The 200 predictions within one impression are correlated — they answer the same query. Resampling
+> them independently pretends you have 160,000 independent observations instead of 800, and produces
+> intervals that are far too narrow. **Suspiciously tight CIs are the symptom.**
 
 > [!warning] The bootstrap measures noise, not correctness
-> It tells you about luck-of-the-draw only. **A pipeline that leaks future data gives you a
-> beautifully tight interval around a completely wrong number.** Tight CIs are not evidence of
-> correctness — see §6.
+> It quantifies luck-of-the-draw only. **A pipeline that leaks future data produces a beautifully
+> tight interval around a completely wrong number.** Tight CIs are not evidence of correctness — that
+> is what the leakage test in §6 is for.
+
+> [!note] One metric legitimately has no CI — and knowing why is worth marks
+> **Coverage counts *distinct* articles**, so it only grows as you evaluate more impressions.
+> Bootstrap resampling draws with replacement, making ~37% of draws duplicates — so every resample
+> sees *fewer* unique articles than the real sample, and the whole interval sits below the estimate.
+> We measured a point of 0.9783 against an interval of [0.9035, 0.9235]: **the estimate outside its
+> own CI**, which is impossible for a valid interval.
+>
+> Subsampling without replacement fails at every ratio too. There is no honest percentile interval
+> here, so coverage is reported as a point estimate marked `(no CI)`. Saying so beats shipping a
+> plausible-looking number that is biased by construction.
+
+### 5.6 · Slices — where the findings actually live
+
+**The need.** A single headline number hides everything interesting. "recall@100 = 0.25" doesn't tell
+you *who* it fails for.
+
+**The why.** Q4.3 requires at least one slice, and slices are where you find things worth writing
+about — a retriever that works for warm users and collapses for cold ones is a *finding*, not a bug.
+
+**The two we use:**
+
+- **Cold vs. warm users**, split on click-history length. Tests whether you have anything to offer a
+  new user.
+- **Head vs. tail articles**, split on train popularity. Tests whether you built a recommender or an
+  elaborate popularity list.
+
+> [!warning] The threshold is a decision, and it must come before the results
+> "Few clicks" has no universal number. EB-NeRD's *minimum* history is 5, so a "< 5 clicks" rule
+> selects **nobody** there, while MIND's median is 19 against EB-NeRD's 92. We derive the boundary
+> from each dataset's measured distribution and report it with every cold-start number.
+>
+> **A slice boundary chosen after seeing which one gives a nicer result is not a finding.**
+
+### 5.7 · Putting it together — what one honest result row looks like
+
+```
+bm25+24h   cold   recall@100   0.1863 [0.1176, 0.2647], n = 102
+└─ retriever  └─ slice   └─ metric   └─ value  └─ 95% CI      └─ sample size
+```
+
+Six pieces, all required. The IRE convention is that **a bare number is never acceptable** — the CI
+and the n travel with it, always, because without them the number cannot be compared to anything.
 
 ---
 

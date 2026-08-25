@@ -1,0 +1,698 @@
+\documentclass[11pt,a4paper]{article}
+\usepackage[margin=1.2cm]{geometry}
+\usepackage{amsmath,amssymb,amsthm}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{float}
+\usepackage{array}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{caption}
+
+\graphicspath{{figs/}}
+
+% Long file paths in \texttt{} cannot break at / or _ and run into the margin.
+\newcommand{\brk}[1]{%
+  \begingroup\ttfamily\hyphenchar\font=-1
+  \discretionary{}{}{}%
+  \expandafter\brkscan\detokenize{#1}\relax\endgroup}
+\def\brkscan#1{%
+  \ifx#1\relax\else
+    \char`#1%
+    \ifnum`#1=`/ \penalty0 \fi
+    \ifnum`#1=`_ \penalty0 \fi
+    \ifnum`#1=`. \penalty0 \fi
+    \expandafter\brkscan
+  \fi}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  columns=fullflexible,
+  breaklines=true,
+  showstringspaces=false,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{green!40!black},
+  language=Python,
+}
+\captionsetup{font=small}
+
+% A finding box: the log's F-numbers are the spine of this report.
+\newcommand{\finding}[1]{\textcolor{blue!55!black}{\textbf{[#1]}}}
+
+\title{\textbf{Information Retrieval and Extraction --- Assignment 1}\\
+       \large Lexical and Semantic Retrieval on MIND and EB-NeRD\\
+       \normalsize Component 1: pipeline, candidate generation, evaluation harness}
+\author{%
+  Noel Alex Jacob \\[2pt]
+  {\footnotesize Roll No.~2025201085} \\[2pt]
+  {\footnotesize \textit{CS4.406 Information Retrieval and Extraction --- IIITH --- Monsoon 2026}}}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{center}
+\fbox{\parbox{0.93\textwidth}{\small
+\textbf{DRAFT --- \today.} Q1, Q2 and Q4 are built and measured; Q5 submission files are
+generated. \textbf{Q3 (semantic retrieval) is not yet built}, so every table below is
+lexical-versus-baselines only, and no leaderboard score exists yet. Sections marked
+\textsc{[pending]} are placeholders with the measurement named but not run. No number in this
+report is estimated: anything not measured is absent, not guessed.}}
+\end{center}
+
+\tableofcontents
+\newpage
+
+% ============================================================
+\section*{Summary of Deliverables}
+\addcontentsline{toc}{section}{Summary of Deliverables}
+% ============================================================
+
+Two news-recommendation datasets are built into one unified, temporally-split feature store; a
+lexical retriever and a full evaluation harness run over both. Every number in this report comes
+from a JSON artefact written by the run that produced it (\brk{results/*.json},
+\brk{data/store/*/manifest.json}), not from a copied console log.
+
+\begin{center}
+\begin{tabular}{clll}
+\toprule
+Q & Deliverable & Where & Status \\
+\midrule
+Q1 & Reproducible pipeline, unified schema, temporal split & \brk{src/data/} & \textbf{done} --- 42\,s rebuild \\
+Q2 & BM25 over title + abstract, recall@K & \brk{src/retrieval/} & \textbf{done} --- 54-cell sweep \\
+Q3 & Embeddings + ANN retrieval & \brk{src/retrieval/} & \textsc{not started} \\
+Q4 & Metrics, beyond-accuracy, slices, bootstrap CIs & \brk{src/eval/} & \textbf{done} --- 72 tests \\
+Q5 & Codabench prediction files & \brk{submissions/} & files generated; \textbf{not submitted} \\
+Q6 & Design note ($\le$4 pages) & --- & this draft is the source \\
+Q9 & Leakage test + serving-feature comparison & \brk{tests/test_no_leakage.py} & \textbf{done} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{Code repository.}
+\href{https://github.com/N03L-22}{\brk{github.com/N03L-22}} --- a personal repository, because the
+GitHub Classroom assignment had not been initialised at the time of writing. If Classroom is opened
+before the deadline the history transfers unchanged; the commit sequence is the same either way.
+
+\paragraph{One command rebuilds everything.}
+\brk{make clean && make data && make store && make bm25 && make eval}. The resource budget is an
+argument at every stage (\brk{--n-jobs}, \brk{--mem-gb}, capped at 28/28 all-inclusive) and the
+\emph{resolved} values are written into every output file, so a number can always be traced back
+to the budget that produced it.
+
+% ============================================================
+\section{What the assignment actually asks, in plain terms}
+% ============================================================
+
+A user arrives at a news site. We are shown who they are, when they arrived, and a slate of
+articles that could be displayed. The task is to guess which they will click.
+
+\paragraph{The move that makes this a retrieval problem.}
+We do not know what this person wants, but we know what they read recently. So we paste together
+the headlines of their recent clicks and treat that text as a \emph{search query}. ``What will
+they click?'' becomes ``which articles match this query?'', and fifty years of search technique
+applies.
+
+\paragraph{Two ways to match, which fail differently.}
+\emph{Lexical} matching counts shared words: they read something about an election, so find other
+articles containing ``election''. Fast and explainable, but blind --- ``car'' and ``automobile''
+are unrelated strings. \emph{Semantic} matching converts each article into a list of numbers
+capturing its meaning and finds articles whose numbers are close. It catches car/automobile but
+can drift into vaguely-related-but-wrong. Both are required precisely because they fail in
+different places.
+
+\paragraph{Why recall, and not accuracy.}
+This component is \emph{candidate generation}: narrowing tens of thousands of articles to a few
+hundred worth ranking. The re-ranker is Component 2. So the only question that matters is
+\emph{did the clicked article survive the cut} --- which is what recall@K measures. Position 180
+of 200 is a complete success here; being absent is fatal and unrecoverable downstream.
+
+\paragraph{The rule that can invalidate everything.}
+When evaluating on Tuesday, the model may only know what happened before Tuesday. If Wednesday's
+clicks leak backwards, the scores look excellent and mean nothing. Hence a temporal split, never
+random, and a test that fails when the boundary breaks.
+
+% ============================================================
+\section{The two datasets, and the asymmetry that shapes every decision}
+% ============================================================
+
+\begin{center}
+\begin{tabular}{lrr}
+\toprule
+ & \textbf{MIND} (English) & \textbf{EB-NeRD} (Danish) \\
+\midrule
+Format & TSV, no header & Parquet \\
+Articles (small tier) & 65,238 & 20,738 \\
+Labelled span & \textbf{6.0 days} & 14.0 days \\
+Impressions, train split & 141,265 & 209,597 \\
+Median click history & 19 & 92 \\
+Article body text & \textbf{absent} & present \\
+Click timestamps & \textbf{absent} & present \\
+Publish time & \textbf{absent (0\%)} & present (100\%) \\
+Session ids & \textbf{absent (0\%)} & present (100\%) \\
+Provided embeddings & \textbf{none} & 300-d word2vec, 768-d mBERT \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\paragraph{The governing constraint.} \finding{F1, F10, F20, F29}
+Every richer feature EB-NeRD offers is one MIND lacks. Using any of them for a headline number
+silently converts a \emph{dataset} comparison into a \emph{feature-availability} comparison, and
+Q3.5 asks explicitly for cross-dataset observations. So:
+
+\begin{quote}
+\textbf{The shared retrieval path uses only the intersection --- title, abstract, category, click
+history. Everything one-sided becomes a clearly-labelled single-dataset ablation.}
+\end{quote}
+
+That single rule resolves four otherwise-independent decisions (encoder choice, recency weighting,
+body text, session context) and is the most load-bearing choice in the component.
+
+\paragraph{Consequences that surprised us.}
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \finding{F27} \textbf{A 7-day test split is impossible on MIND} --- its entire labelled
+        range is 6.0 days, so a 7-day test would consume the training data. The split \emph{rule}
+        is held constant and the realised spans differ: EB-NeRD 7 days, MIND 1 day.
+  \item \finding{F9} EB-NeRD's \emph{minimum} history length is 5, so a ``cold start = fewer than
+        5 clicks'' rule selects nobody there. Thresholds must be derived per dataset.
+  \item \finding{F29} EB-NeRD sessions average \textbf{1.9 impressions} --- ``session context''
+        means roughly one prior impression. Measured, then dropped from C-1 (Sec.~\ref{sec:dec}).
+\end{itemize}
+
+% ============================================================
+\section{Q1 --- The pipeline}
+% ============================================================
+
+Raw archives $\rightarrow$ per-dataset readers $\rightarrow$ unified schema $\rightarrow$ temporal
+split $\rightarrow$ parquet feature store. One reader per dataset knows its own file layout;
+nothing downstream of \brk{src/data/readers.py} branches on which dataset it is looking at.
+
+\begin{center}
+\begin{tabular}{lrrrl}
+\toprule
+Dataset & Train & Val & Test & Realised span \\
+\midrule
+MIND    & 141,265 & 15,700 & 73,152  & 2019-11-09 $\rightarrow$ 11-15 (6.0 d) \\
+EB-NeRD & 209,597 & 23,290 & 244,647 & 2023-05-18 $\rightarrow$ 06-01 (14.0 d) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Realised proportions are 61/7/32 on MIND and 44/5/51 on EB-NeRD. \finding{F4, F19} A literal
+80/10/10 was rejected: it discards roughly 40\% of EB-NeRD's labelled impressions. We report the
+per-dataset proportions rather than claiming a uniform ratio.
+
+\subsection{The leakage boundary, and the honest limit of the test for it}
+
+For a test impression at time $t$, that user's history is truncated to clicks strictly before $t$.
+\brk{tests/test_no_leakage.py} asserts this on the built store \emph{and} injects a deliberate
+post-boundary click to confirm the checker fails --- a test that passes both before and after the
+boundary breaks would prove nothing.
+
+\begin{quote}\small
+\textbf{Stated limitation.} \finding{F1} The invariant is verifiable only where per-click
+timestamps exist, i.e.\ \textbf{EB-NeRD}. MIND's history is an untimestamped list, so on MIND the
+boundary rests on the authors' construction and cannot be checked from the data. The store records
+this per row as \brk{history_verifiable}, and the manifest as
+\brk{history_boundary_verifiable: false}. Claiming the test covers MIND would be worse than the
+gap itself.
+\end{quote}
+
+\subsection{The corpus decision, and the invisible ceiling it avoids}
+
+\finding{F2, F17, F20} MIND ships \emph{two different} \brk{news.tsv} files: 51,282 articles in
+train, 42,416 in dev, union 65,238. Dev therefore contributes \textbf{13,956 articles (21\%) that
+train never saw}.
+
+Measured over 61,028 sampled dev clicks: \textbf{23.3\% land on articles absent from train's
+file}. Indexing only the train corpus caps recall at \textbf{0.767} regardless of retriever
+quality --- and that ceiling is invisible in the output, looking exactly like a weak model. We
+therefore index the \textbf{union} for every reported number, and run per-split as a separate
+ablation whose ceiling is stated.
+
+This is not hypothetical: an early skeleton run capped the corpus arbitrarily and returned recall
+0.0000 everywhere, because 372 of 379 clicked articles fell outside the kept slice.
+
+% ============================================================
+\section{Q2 --- Lexical retrieval}
+% ============================================================
+
+BM25 over \textbf{title + abstract} (Q2.1), \brk{bm25s} backend, with an independent $\sim$50-line
+textbook implementation used as a correctness check. Tokenisation is regex word tokens, lowercased,
+NFC-normalised, no stemming and no stopword removal --- applied identically to both languages.
+
+\begin{quote}\small
+\textbf{Why no stemming.} An English stemmer on Danish is actively harmful, and using a
+\emph{different} stemmer per dataset would confound the cross-dataset comparison. IDF already
+down-weights common terms, making stopword removal largely redundant. Per-language stemming is
+named as the obvious ablation.
+
+\textbf{Why NFC is not optional.} Danish \texttt{\aa} can be encoded as one code point or as
+base+combining pair; two encodings of one word are two index terms, silently halving recall on
+affected queries. Applied to corpus \emph{and} query, and asserted in a test. Note that
+\texttt{\o} and \texttt{\ae} do \emph{not} decompose --- our first test fixture used
+\texttt{\o} and was therefore testing nothing.
+\end{quote}
+
+\subsection{Do abstracts earn their place?}\label{sec:abstracts}
+
+Q2.1 mandates title + abstract. We measured what that actually contributes.
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Corpus & Title tokens & Abstract tokens & Abstract share & Empty abstracts \\
+\midrule
+MIND    & 11.2 & 36.1 & \textbf{76.3\%} & 3,415 (5.2\%) \\
+EB-NeRD & 6.8  & 18.3 & \textbf{72.8\%} & 1,709 (8.2\%) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Abstracts are roughly three times the title and \textbf{dominate the index}. Their measured
+contribution (EB-NeRD, BM25 + 24\,h window, $n=800$):
+
+\begin{center}
+\begin{tabular}{lr}
+\toprule
+Indexed text & recall@50 \\
+\midrule
+Title + abstract & 0.2475 \\
+Title only       & 0.2362 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\finding{F28} \textbf{+0.011, against a CI half-width of $\pm$0.030 --- statistically
+indistinguishable.} Three quarters of the index buys an effect too small to detect at this sample
+size. We keep the field pair because Q2.1 is binding, and report the null result as a null result:
+\emph{the mandated field pair is not measurably better than titles alone}. The MIND title-only arm
+timed out and is still to be run; no MIND figure is quoted.
+
+\subsection{Parameter sweep --- and what it says about tuning}
+
+Full grid $k_1 \in \{0.9, 1.2, 1.6\} \times b \in \{0.3, 0.75, 1.0\} \times \mathrm{last\_n} \in
+\{5, 15, 50\} \times \mathrm{window} \in \{24\mathrm{h}, \mathrm{none}\}$, run \textbf{on val only},
+54 cells in 44\,s across 12 workers.
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+Factor & Range (EB-NeRD, recall@100) & Verdict \\
+\midrule
+\textbf{Recency window} (24\,h vs none) & 0.0075 $\rightarrow$ 0.2475 --- \textbf{33$\times$} & dominates everything \\
+\brk{last_n} (5/15/50)  & 0.2162 $\rightarrow$ 0.2475 & modest; 15 peaks, 50 worst \\
+$b$ (0.3/0.75/1.0)      & 0.2313 $\rightarrow$ 0.2475 & small, in the predicted direction \\
+$k_1$ (0.9/1.2/1.6)     & 0.2362 $\rightarrow$ 0.2475 & \textbf{smallest} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\finding{F23} The ordering \emph{is} the finding: \textbf{tuning BM25 is nearly pointless here
+compared with deciding what pool it searches}. $k_1$ was predicted to barely matter (titles rarely
+repeat a term) and did not. Parameters chosen on val before test was touched: EB-NeRD
+$k_1{=}1.6, b{=}1.0, n{=}15$; MIND $k_1{=}1.6, b{=}0.75, n{=}5$.
+
+\begin{quote}\small
+\textbf{Do not over-claim these margins.} The top-to-bottom spread within the 24\,h arm is
+0.2162--0.2475 at $n=800$, comfortably inside the CI width. The parameter choice is defensible
+\emph{as a procedure}, not as a finding.
+\end{quote}
+
+% ============================================================
+\section{Q3 --- Semantic retrieval \textsc{[pending]}}
+% ============================================================
+
+Not yet built. The decisions are settled and recorded; the measurements are not taken, so no
+numbers appear here.
+
+\textbf{Planned:} own embeddings from \brk{xlm-roberta-base} (768-d) as primary --- the brief names
+XLM-RoBERTa explicitly, and it runs on both datasets. Ablations: \brk{xlm-roberta-large} (1024-d,
+the capacity question and the Q6 scale anchor) and a similarity-trained
+\brk{paraphrase-multilingual-MiniLM-L12-v2} (384-d). EB-NeRD's provided 768-d mBERT vectors are a
+same-dimension baseline; its 300-d word2vec a weaker one.
+
+\begin{quote}\small
+\textbf{The risk being controlled for.} XLM-R and BERT are trained for masked-language modelling,
+\emph{not} to make cosine similarity meaningful. Their \texttt{[CLS]} vectors are known to occupy
+a narrow cone where everything looks similar. The failure is silent --- plausible but mediocre
+numbers, easily misdiagnosed as ``semantic retrieval does not work here''. Mitigations: mean-pool
+the final hidden states (never \texttt{[CLS]}), L2-normalise, and keep the similarity-trained
+MiniLM row so the hypothesis is \emph{measured} rather than assumed. A Danish sanity probe --- 20
+known-related pairs against 20 unrelated --- gates all of it.
+\end{quote}
+
+\paragraph{ANN index.} \finding{F31} Brute force on demo/small (Q3.2 permits it, and it is
+\emph{exact}, giving the recall ceiling ANN is measured against); FAISS HNSW at large scale.
+Benchmarked with random vectors, 28 threads:
+
+\begin{center}
+\begin{tabular}{lrrrr}
+\toprule
+Corpus & Exact & HNSW $ef{=}128$ & Speed-up & recall vs exact \\
+\midrule
+EB-NeRD small, 768-d  & 190\,ms   & 14.8\,ms & 12.8$\times$ & 0.7700 \\
+MIND small, 768-d     & 888\,ms   & 36.3\,ms & 24.5$\times$ & 0.5778 \\
+EB-NeRD large, 1024-d & 1{,}677\,ms & 60.1\,ms & 27.9$\times$ & 0.4461 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+\textbf{These are a worst case and must be re-run on real vectors.} Uniform-random vectors in
+768--1024 dimensions are near-orthogonal, the hardest possible case for a proximity graph. Real
+embeddings cluster, so measured recall should be substantially higher. What the benchmark
+\emph{does} establish regardless of distribution: the latency, the build times (4.1\,s / 23.3\,s /
+74.4\,s), the memory (514\,MB at large), and the shape of the $ef$ trade-off. \textbf{ANN recall
+must never be reported without the exact baseline beside it} --- a low $ef$ silently caps recall
+and looks like a weak encoder.
+\end{quote}
+
+% ============================================================
+\section{Q4 --- The evaluation harness}
+% ============================================================
+
+One function, \brk{evaluate(retriever, split, ...)}, scores every retriever. Q4.5 is satisfied by
+construction: there is nowhere else a metric can be computed. Output is a tidy table --- one row
+per dataset $\times$ retriever $\times$ slice $\times$ metric $\times$ feature-set --- so the
+tables below are a group-by, not a copy-paste.
+
+\subsection{Two regimes, kept strictly apart}
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+ & \textbf{Corpus regime} & \textbf{Slate regime} \\
+\midrule
+Candidates & every article (21K--65K) & the $\sim$11 shown in that impression \\
+Question & did the click survive the cut? & did you rank it above the others shown? \\
+Metric & recall@K & AUC, MRR, nDCG \\
+Who cares & candidate generation (this component) & the leaderboard \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+Conflating them produces numbers that look fine and mean nothing --- computing AUC over the whole
+corpus makes almost everything a negative and yields a spectacular, meaningless score. Every result
+row carries a \brk{regime} column.
+
+\subsection{Results --- EB-NeRD, small tier}
+
+$n=800$ evaluated impressions, $B=1000$ seeded bootstrap, 95\% percentile CIs.
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+Retriever & recall@50 & recall@100 & recall@200 \\
+\midrule
+\textbf{Recency} (ignores the user) & \textbf{0.9050} [0.8850, 0.9237] & \textbf{0.9463} [0.9300, 0.9600] & \textbf{0.9688} [0.9562, 0.9800] \\
+BM25 + 24\,h window & 0.2475 [0.2175, 0.2775] & 0.2475 [0.2175, 0.2775] & 0.2475 [0.2175, 0.2775] \\
+BM25, full corpus & 0.0075 [0.0025, 0.0138] & 0.0125 [0.0050, 0.0200] & 0.0200 [0.0100, 0.0300] \\
+Popularity & 0.0063 [0.0013, 0.0125] & 0.0100 [0.0037, 0.0163] & 0.0262 [0.0150, 0.0375] \\
+Random & 0.0000 & 0.0000 & 0.0000 \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Results --- MIND, small tier}
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+Retriever & recall@50 & recall@100 & recall@200 \\
+\midrule
+\textbf{Popularity} & \textbf{0.0468} [0.0340, 0.0609] & \textbf{0.0682} [0.0531, 0.0861] & \textbf{0.1415} [0.1187, 0.1649] \\
+BM25 & 0.0116 [0.0054, 0.0189] & 0.0159 [0.0086, 0.0240] & 0.0217 [0.0136, 0.0310] \\
+Random & 0.0004 [0.0000, 0.0013] & 0.0007 [0.0000, 0.0017] & 0.0007 [0.0000, 0.0017] \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{The three uncomfortable observations}\label{sec:obs}
+
+\paragraph{1. Recency dominates everything.} \finding{F16, F21}
+94.3\% of EB-NeRD clicks are on articles under 24 hours old, while only $\sim$1.1\% of the corpus
+is that fresh. A retriever that ignores the user entirely and returns the newest articles achieves
+recall@50 = 0.9050. \textbf{Candidate generation on this dataset is primarily a
+recency-filtering problem and only secondarily a text-matching one.} The interesting question
+shifts from ``lexical or semantic?'' to ``given the $\sim$132 fresh articles, which does the user
+pick?'' --- which is exactly what a re-ranker answers.
+
+This is legitimate, not a leak: publish time is known at serving time. Ranking by \emph{future}
+engagement would be a leak; filtering on \brk{published_time < t} is not.
+
+\paragraph{2. BM25 is statistically indistinguishable from popularity on EB-NeRD, and loses to it
+on MIND.} \finding{F21, F25}
+The full-corpus BM25 and popularity CIs overlap on EB-NeRD. On MIND, popularity beats BM25 with
+non-overlapping CIs at every K --- and MIND has no publish times, so the 24-hour window that
+rescues BM25 on EB-NeRD is \textbf{unavailable there}. The cross-dataset asymmetry is not a
+detail; it is the result.
+
+Replacing the skeleton's crude token-overlap scorer with real BM25 changed almost nothing on the
+full corpus (0.0000 $\rightarrow$ 0.0075). The scoring function was never the limiting factor ---
+the retrieval pool was.
+
+\paragraph{3. The slate metrics barely discriminate.} \finding{F25}
+
+\begin{center}\small
+\begin{tabular}{lcc}
+\toprule
+EB-NeRD & AUC & nDCG@10 \\
+\midrule
+BM25 + 24\,h & 0.5243 [0.5002, 0.5467] & 0.4657 [0.4465, 0.4861] \\
+Recency      & 0.5047 [0.4841, 0.5240] & 0.4281 [0.4095, 0.4487] \\
+\textbf{Random} & \textbf{0.4810} [0.4591, 0.5022] & \textbf{0.4191} [0.4019, 0.4373] \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Every AUC is within noise of 0.5, and random ranking scores nDCG@10 = 0.42.} Not a bug:
+slates average 11--12 items with exactly one click, so nDCG@10 covers nearly the whole slate and a
+random permutation places the single positive respectably often. \textbf{Any slate-regime table
+without a random baseline row is misleading} --- 0.466 looks decent until the floor is known to be
+0.419.
+
+\subsection{Beyond-accuracy --- the trade-off, quantified}\label{sec:beyond}
+
+\begin{center}\small
+\begin{tabular}{lccc}
+\toprule
+EB-NeRD retriever & Diversity & Novelty (bits) & Coverage \\
+\midrule
+BM25, full corpus & 0.6979 [0.6907, 0.7046] & 12.61 & \textbf{0.5037} (no CI) \\
+BM25 + 24\,h      & 0.8080 [0.8056, 0.8104] & 11.67 & 0.0110 (no CI) \\
+Recency           & 0.8313 [0.8308, 0.8319] & 11.30 & 0.0147 (no CI) \\
+Popularity        & 0.7924 (zero width)     & \textbf{8.64} & 0.0096 (no CI) \\
+Random            & \textbf{0.8650} (zero width) & 12.71 & 0.0096 (no CI) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\finding{F26} Three things worth stating:
+\begin{itemize}[leftmargin=1.4em,itemsep=2pt]
+  \item \textbf{The recency filter costs 46$\times$ coverage} (0.5037 $\rightarrow$ 0.0110) while
+        buying 33$\times$ recall. That is the sharpest accuracy-versus-coverage trade-off measured.
+  \item \textbf{Popularity's novelty is 4 bits below everything else} --- it recommends exactly
+        what everyone already clicked. Its zero-width CI is correct, not a bug: it returns the same
+        list to every user, so there is no between-impression variation to bootstrap.
+  \item \textbf{Random has the highest diversity.} Diversity alone is not a quality signal; it must
+        always be read against an accuracy column.
+\end{itemize}
+
+\subsection{One metric legitimately has no confidence interval}\label{sec:noci}
+
+\finding{F24} D5 requires a bootstrap CI on every metric. \textbf{Coverage cannot honestly have
+one}, and the failure was caught by the harness's own output: BM25's coverage came out as
+$0.3933\ [0.3432, 0.3671]$ --- \textbf{the point estimate outside its own interval}, impossible
+for a valid percentile bootstrap.
+
+Coverage counts \emph{distinct} articles, so it grows monotonically with the number of impressions
+evaluated. Resampling $n$ units with replacement makes $\sim$37\% duplicates, so every resample
+sees fewer unique articles than the real sample and the whole distribution sits below the estimate.
+
+\begin{center}\small
+\begin{tabular}{ll}
+\toprule
+Scheme & Result (full-sample coverage 0.9790) \\
+\midrule
+Resample $n$ with replacement & 0.9783 vs [0.9035, 0.9235] --- excludes the point \\
+Subsample $m/n = 0.50$        & mean 0.8532 --- still excludes \\
+$m/n = 0.80$ / $0.90$ / $0.95$ / $0.99$ & 0.9540 / 0.9688 / 0.9745 / 0.9782 --- all exclude \\
+$m = n$ without replacement   & the original sample: zero variance, zero-width interval \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+No ratio works; the bias vanishes only as $m \rightarrow n$, where no resampling remains.
+Coverage is therefore reported as a point estimate with explicit \texttt{NaN} bounds and a
+\texttt{(no CI)} marker. \textbf{Saying so is a stronger answer than shipping a plausible-looking
+interval that is biased by construction.} Coverage remains comparable across retrievers on the
+same impression sample, which is how it is reported.
+
+\subsection{Slices}
+
+Thresholds are derived per dataset from the measured distribution, never fixed constants, and are
+reported with every sliced number. A boundary chosen after seeing which one gives a nicer result
+is not a finding. Cold start is defined as fewer than 7 clicks; EB-NeRD's minimum history is 5,
+so this selects a narrow band there and the realised slice size is reported alongside.
+
+% ============================================================
+\section{Q9 --- Anti-gaming}
+% ============================================================
+
+\paragraph{Metrics with and without serving-unavailable features.}
+A live recommender ranking at 09:00 cannot know how long a user will read an article it has not
+yet shown them. EB-NeRD's training rows carry \brk{read_time}, \brk{scroll_percentage},
+\brk{next_read_time} and \brk{next_scroll_percentage} --- all recorded \emph{after} the click.
+Predicting a click from its own consequences is circular. \finding{F6}
+
+The organisers settled the boundary for us: \textbf{those four columns are exactly what is deleted
+from the test set}. They are excluded in \brk{clean.py} with a comment naming why, so a future
+feature-store change cannot quietly reintroduce them.
+
+Our retrievers never touch those fields, so the naive with/without gap is zero. The honest pair we
+do have is the \textbf{cold-start popularity fallback}, since popularity computed over the
+evaluation window is future knowledge. Every fallback result carries an \brk{is_fallback} flag, so
+the comparison is a filter on the results table rather than a second run.
+
+\paragraph{The behaviour-window test.} Described in Sec.~3.1, including the honest statement that
+it covers EB-NeRD only.
+
+% ============================================================
+\section{Q5 --- Submissions}
+% ============================================================
+
+Both leaderboards take the same format: one line per impression,
+\brk{impression_id [rank1,...,rankN]}, a permutation aligned to the candidate list \emph{in the
+order given}. It is a mark-up of the slate handed to you, not a re-ordering --- emitting a
+preferred order is scored as a different answer entirely.
+
+\paragraph{A 16$\times$ algorithmic fix was required.} \finding{F32}
+The first run produced predictions at \textbf{162 impressions/s} --- about 4 hours per file ---
+because it ran a top-500 retrieval over all 120,961 articles per impression, then discarded
+everything outside that impression's $\sim$37-item slate.
+
+\begin{center}\small
+\begin{tabular}{lrl}
+\toprule
+Approach & Rate & Verdict \\
+\midrule
+\brk{retrieve(k=500)} over the full corpus & 162/s & 4 hours per file \\
+\brk{bm25s} \brk{weight_mask} on the slate & 173/s & exact, but masks selection not the scan \\
+\textbf{Doc-major scoring of the slate only} & \textbf{2{,}570/s} & \textbf{16$\times$}; $\sim$15 min \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\begin{quote}\small
+\textbf{The fast path is not numerically identical, and that is deliberate.}
+\brk{retrieve()} delegates to \brk{bm25s} (Lucene IDF variant); \brk{score_subset()} uses the
+textbook Robertson formula. Reproducing \brk{bm25s}'s exact scores was attempted and abandoned ---
+a careful replication of its documented formula still disagreed by up to 106 in absolute score on
+the real corpus. What was verified instead is that \textbf{the two produce equivalent rankings}:
+0 discordant pairs out of 780. A regression test asserts zero discordant pairs rather than list
+equality, because a score \emph{tie} broken differently is not a disagreement. This is acceptable
+\textbf{only} because the submission format is a permutation --- \brk{score_subset()} must never
+be used for a reported metric.
+\end{quote}
+
+\paragraph{Status.} MIND prediction file generating at the time of writing
+(2,370,727 impressions); EB-NeRD test data staged (13,536,710 rows, 13,336,711 unique impression
+ids --- \textbf{$\sim$200K ids repeat, so a naive row-wise write emits duplicate lines}).
+\textbf{Neither has been submitted, and no leaderboard score exists.} Screenshots (Q7.3) are
+therefore pending.
+
+\begin{quote}\small
+\textbf{What is currently being submitted is a weak baseline, and should be read as one.} The
+retriever is BM25 at val-chosen parameters, which Sec.~\ref{sec:obs} shows is indistinguishable
+from popularity. The submission exists to de-risk the format and the memory path early; it is not
+a result.
+\end{quote}
+
+% ============================================================
+\section{Key decisions and rejected alternatives}\label{sec:dec}
+% ============================================================
+
+The full record with costs is in \brk{decisions.md}. The ten that matter:
+
+\begin{center}\small
+\begin{tabular}{p{2.6cm}p{6.2cm}p{6.4cm}}
+\toprule
+Decision & Chosen & Rejected, and why \\
+\midrule
+Unified schema & Intersection only: title, abstract, category, history & Richer per-dataset fields --- would turn a dataset comparison into a feature-availability one \\
+Split rule & Hold out official test, carve val from train tail & Literal 7 days (impossible on MIND); literal 80/10/10 (discards 40\% of EB-NeRD) \\
+MIND corpus & Union (65,238) for headline, per-split as ablation & Per-split as headline --- invisible 0.767 recall ceiling \\
+Lexical fields & Title + abstract (mandated), title-only reported & Title+body --- MIND has no body, breaking comparability \\
+Query & Last 20 clicks, logarithmic position decay & Exponential decay (collapses to last 2--3 titles); plain mean (bland over 160 clicks) \\
+Cold start & $<7$ clicks; rising + popular fallback, train-only & Fixed $<5$ (selects nobody on EB-NeRD); popularity alone (stale in news) \\
+Encoder & Own \brk{xlm-roberta-base} 768-d, both datasets & Provided vectors as primary --- EB-NeRD only, so MIND would use a different model \\
+ANN & Brute force on small (exact), FAISS HNSW on large & ScaNN (TensorFlow-coupled); ANN-only (no exact ceiling to measure against) \\
+Session context & \textbf{Dropped from C-1}, deferred to C-2 & Building it --- 0\% coverage on MIND, and 1.9 impressions/session on EB-NeRD \\
+Re-ranker & Interface defined, identity implementation only & Building a real ranker --- that is C-2, and costs C-1's marks \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+% ============================================================
+\section{Where this breaks at 10$\times$ (Q6)}
+% ============================================================
+
+\begin{itemize}[leftmargin=1.4em,itemsep=3pt]
+  \item \finding{F15} \textbf{The join breaks before the model does.} EB-NeRD large is 52$\times$
+        the impressions of small and its history parquet is larger than its behaviours file. The
+        data layer, not the retriever, is the first thing to give.
+  \item \finding{F31} \textbf{ANN recall degrades with scale.} Against exact search, HNSW at
+        $ef{=}128$ falls 0.77 $\rightarrow$ 0.45 as the corpus grows 6$\times$ and the dimension
+        1.33$\times$. Index build goes 4.1\,s $\rightarrow$ 74.4\,s; vectors 64\,MB
+        $\rightarrow$ 514\,MB.
+  \item \finding{F32} \textbf{The prediction path had to change algorithm, not just scale.}
+        Full-corpus retrieval per impression was 4 hours per file; scoring the slate directly is
+        $\sim$15 minutes. This is the concrete 10$\times$ lesson: the naive implementation was
+        adequate at small and unusable at large.
+  \item \textbf{Not yet measured:} encoder throughput on 86K articles, and the real-vector HNSW
+        recall that would replace the pessimistic random-vector figures.
+\end{itemize}
+
+% ============================================================
+\section{Limitations, stated plainly}
+% ============================================================
+
+\begin{enumerate}[leftmargin=1.6em,itemsep=3pt]
+  \item \textbf{Q3 is not built.} No semantic retriever, so no lexical-versus-semantic comparison
+        --- the substance of Q3.5 --- exists yet.
+  \item \textbf{No leaderboard scores.} Prediction files are generated but not submitted.
+  \item \textbf{$n=800$ per dataset} for the CI-bearing results. CI half-widths of $\pm$0.03 mean
+        several reported differences are not statistically separable, and the report says so at
+        each point rather than once.
+  \item \textbf{MIND's leakage boundary is unverifiable from data} and rests on the authors'
+        construction.
+  \item \textbf{HNSW figures use random vectors} and are a pessimistic bound; they must be re-run
+        on real embeddings.
+  \item \textbf{MIND's title-only ablation timed out} and is not reported.
+  \item \textbf{MIND's test window is a single day}, so one day's topical anomaly moves every MIND
+        number.
+\end{enumerate}
+
+% ============================================================
+\section{Reproducing this report}
+% ============================================================
+
+\begin{lstlisting}[language=bash]
+make clean && make data && make store   # Q1: raw -> unified, temporally split store
+make bm25                               # Q2: BM25 vs baselines, both datasets
+make bm25-sweep                         # Q2: 54-cell parameter sweep, val only
+make eval                               # Q4: full harness, bootstrap CIs
+make test                               # 72 tests, incl. the leakage mutation test
+python -m src.submit.codabench --dataset mind --tier large    # Q5
+\end{lstlisting}
+
+Artefacts: \brk{results/eval_*.json} (every result row with CI, $n$, regime and slice basis),
+\brk{results/bm25_sweep_*.json}, \brk{data/store/*/manifest.json} (split spans, counts, resolved
+budget), \brk{submissions/*.meta.json}. The findings cited as \finding{Fnn} are in
+\brk{plan/execution_plan_log.md}.
+
+\end{document}

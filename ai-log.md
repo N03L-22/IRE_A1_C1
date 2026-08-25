@@ -166,3 +166,40 @@ real verification loop is the point, not a transcript.
 ### 2026-08-18 17:20 · `e71a9c7f`
 
 > continue with steps 3-5. make sure these are also logged.
+
+### 2026-08-25 01:56 · `0df5ffb1`
+
+> what are the prediction files to be submitted? explain in simple terms
+
+### 2026-08-25 01:58 · `0df5ffb1`
+
+> do we need to combine the datasets to unified scheema? or the problems can be dealt with seperately?
+
+### 2026-08-25 01:59 · `0df5ffb1`
+
+> what are the 2 retrieves?
+
+### 2026-08-25 02:01 · `0df5ffb1`
+
+> can you do the testing here to understand how the mind and eb-nerd will rank our solution?
+
+### 2026-08-25 02:03 · `0df5ffb1`
+
+> build the bm25 first. are we making the basic necessary ones for now and then when i ask, will move to more in depth?
+
+### 2026-08-25 02:16 · `0df5ffb1`
+
+> build the evaluation harness.
+
+### 2026-08-25 16:51 · `0df5ffb1`
+
+> bert vs XLM-Roberta? lets use XLM robert 768 vs 1024?
+
+### 2026-08-25 16:53 · `0df5ffb1`
+
+> check the options listed in the pdf. not just Q3 but others also. show the combinational effect of those options
+
+### 2026-08-25 20:37 · `0df5ffb1`
+
+> use 7 days for the large and 2 for small? should we compare our xlm-Reoberta 768. avoid session context since on avg its low. mention the eval;uation parameters in the foundations with detailed simple explanations built up to strong foundations. the need, why, and how. you can remove the section D since i allow for this time and also since we have made a file for decisions which must also contain the section D contents. based on the current selections, create a submissions for both. lets stcik to the hybrid official splits for the leadeerboard setup. lets stcik to per split corpus for minds train and dev? ignore Q7.4 for now.
+> and lets move to phase 3 once done.

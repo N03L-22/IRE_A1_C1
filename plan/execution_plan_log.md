@@ -31,7 +31,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 >
 > Built store: 272 MB parquet, `data/store/{mind,ebnerd}/` + a manifest per dataset.
 >
-> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F20.
+> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F31.
 >
 > **Large tiers measured (F13–F15) but still deliberately idle.** The headline numbers stay on small;
 > what the measurement bought is a concrete Q6 scale answer and a cheaper baseline, not a change of
@@ -267,6 +267,205 @@ Also measured: **0% of MIND articles carry a publish time** vs **100% of EB-NeRD
 blocker for applying F16's recency filter to MIND, and it is now confirmed on the real store rather
 than inferred from the schema.
 
+### F21 — Real BM25 confirms F16 rather than overturning it
+Phase 2's `bm25s`-backed retriever, run on the **small** tier through the skeleton harness. Not
+deliverable numbers — no CIs, single configuration, exploratory split — but the shape is unambiguous.
+
+**EB-NeRD small** (800 evaluated impressions, 20,738-article corpus):
+
+| Retriever | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| Recency only (user ignored) | **0.9050** | **0.9463** | **0.9688** |
+| BM25 + 24h window | 0.2387 | 0.2387 | 0.2387 |
+| Popularity (train clicks) | 0.0063 | 0.0100 | 0.0262 |
+| BM25, full corpus | 0.0063 | 0.0112 | 0.0200 |
+
+**MIND small** (782 evaluated impressions, 65,238-article corpus):
+
+| Retriever | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| Popularity (train clicks) | **0.0652** | **0.0934** | **0.1918** |
+| BM25, full corpus | 0.0128 | 0.0179 | 0.0243 |
+
+Three things this settles:
+
+1. **Real BM25 ≈ the token-overlap stand-in on the full corpus** (0.006 vs 0.000 on EB-NeRD). The
+   skeleton predicted replacing it "should visibly improve recall"; it did not. F16's diagnosis was
+   right and the stand-in was not the limiting factor — **the full-corpus regime is**.
+2. **The 24h window is worth ~38× on EB-NeRD** (0.0063 → 0.2387 at K=50), reproducing F16's
+   0.00 → 0.28 with a real scorer. Recency filtering, not the scoring function, is what moves recall.
+3. **BM25 loses to popularity on MIND at every K** — and on MIND there is no recency filter available
+   (F20: 0% publish times), so the rescue that works on EB-NeRD is unavailable there. This is the
+   sharpest cross-dataset asymmetry measured so far.
+
+### F22 — The recency window caps recall@K, making K irrelevant above the window size
+The EB-NeRD windowed row above is **identical at K = 50, 100 and 200** (0.2387). Not a bug in K
+handling — the plan's pitfall table lists `recall@200 < recall@50` as impossible, and this is the
+adjacent case: recall *flat* in K.
+
+Measured cause: a 24h window over this corpus admits **~132 of 20,738 articles (0.6%)**, and after
+BM25 scoring the returned lists average **7.0 results at K=50 and 27.0 at K=200** — far below K. The
+window, not K, is the binding constraint. Widening it restores monotonicity and confirms the
+mechanism:
+
+| Window | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| 24h | 0.2387 | 0.2387 | 0.2387 |
+| 72h | 0.1462 | 0.2400 | 0.2412 |
+
+Note 72h is *worse* at K=50 — a wider pool admits more stale-but-similar distractors that outrank the
+fresh target, which is F16's mechanism seen from the other side.
+
+*Consequence for Phase 4:* **the window size and K interact, so they must be swept together.**
+Reporting recall@K at a single window is reporting one cell of a 2-D surface. Also worth a design-note
+sentence: a retriever that returns fewer than K results makes recall@K and recall@(K+n) identical,
+which looks like a bug and is not — the harness should log realised list length alongside recall.
+
+### F23 — The k1/b sweep confirms D5: the window dominates, the BM25 knobs barely matter
+Full grid `k1 ∈ {0.9, 1.2, 1.6} × b ∈ {0.3, 0.75, 1.0} × last_n ∈ {5, 15, 50} × window ∈ {24h, none}`,
+run on **val only**, 800 evaluated impressions. 54 cells on EB-NeRD in **44 s** across 12 workers;
+27 cells on MIND in **31 s** (no window arm — F20). Raw output in `results/bm25_sweep_*.json`.
+
+**The effect sizes are ordered, and the ordering is the finding:**
+
+| Factor | Range across the sweep (EB-NeRD, recall@100) | Verdict |
+|---|---|---|
+| **Recency window** (24h vs none) | 0.0075 → 0.2475 — **33×** | Dominates everything |
+| `last_n` (5/15/50) | 0.2162 → 0.2475 within the 24h arm | Modest; 15 is the peak, 50 is worst |
+| `b` (0.3/0.75/1.0) | 0.2313 → 0.2475 | Small, and in D5's predicted direction |
+| `k1` (0.9/1.2/1.6) | 0.2362 → 0.2475 | **Smallest — as D5 predicted** |
+
+D5 predicted `k1` "barely matters — titles+abstracts rarely repeat a term" and that `b` would matter
+more because empty abstracts make lengths bimodal (measured: **8.2% of EB-NeRD articles**). Both held.
+The honest summary is that **tuning BM25 is nearly pointless here compared to deciding what pool it
+searches** — which is a better design-note sentence than any parameter table.
+
+**Chosen on val, before test is touched** (the D5 discipline):
+
+| Dataset | k1 | b | last_n | window |
+|---|---|---|---|---|
+| EB-NeRD | 1.6 | 1.0 | 15 | 24h |
+| MIND | 1.6 | 0.75 | 5 | none (unavailable) |
+
+> [!warning] These margins are inside the noise — do not over-claim them
+> Top-to-bottom spread within the EB-NeRD 24h arm is 0.2162–0.2475 on 800 impressions. No CIs have
+> been computed yet, and a 0.03 gap at n=800 is very plausibly noise. **The parameter choice is
+> defensible as a procedure, not as a finding.** Phase 4 must re-run the top few cells with bootstrap
+> CIs before any of this appears in the note.
+
+Note `last_n=5` winning on MIND while `last_n=15` wins on EB-NeRD is consistent with F8 (EB-NeRD
+histories are ~5× longer), but at these margins it is a hypothesis, not a result.
+
+### F24 — Coverage has no defensible bootstrap CI, and the first attempt produced an impossible one
+D5 requires a bootstrap CI on **every** number. Coverage cannot have one, and the failure was caught
+by the harness's own output rather than by reasoning.
+
+**The symptom:** BM25's coverage came out as `0.3933 [0.3432, 0.3671]` — the point estimate **outside
+its own confidence interval**, which is impossible for a percentile bootstrap.
+
+**The cause:** coverage counts *distinct* articles across the result set, so it is monotonically
+increasing in the number of impressions evaluated. Resampling n units with replacement makes ~37% of
+draws duplicates, so every resample sees fewer unique articles than the full sample. The entire
+bootstrap distribution sits below the point estimate by construction.
+
+Measured, on 400 synthetic impressions over a 20,738-article corpus (full-sample coverage 0.9790):
+
+| Scheme | Result |
+|---|---|
+| Resample n **with** replacement | 0.9783 vs CI [0.9035, 0.9235] — **excludes the point** |
+| Subsample m/n = 0.50 without replacement | mean 0.8532, CI [0.8502, 0.8564] — still excludes |
+| m/n = 0.80 | mean 0.9540 — still excludes |
+| m/n = 0.90 | mean 0.9688 — still excludes |
+| m/n = 0.95 | mean 0.9745 — still excludes |
+| m/n = 0.99 | mean 0.9782 — still excludes |
+| m = n without replacement | the original sample: zero variance, zero-width interval |
+
+**No ratio works.** The bias vanishes only as m → n, at which point there is no resampling left.
+
+*Decision:* **coverage is reported as a point estimate with explicit `NaN` bounds and a `(no CI)`
+marker in the table.** Emitting NaN rather than omitting the row makes the absence visible instead of
+looking like a formatting loss. `src/eval/bootstrap.py:point_only()` carries the full reasoning, and a
+test asserts the NaN bounds so nobody "fixes" it back into a manufactured interval.
+
+> [!important] This is a design-note paragraph, not a footnote
+> D5 says "bootstrap CI for each metric" and the honest answer is that one metric cannot have one.
+> Saying so — with the measurements above — is a stronger answer than shipping a plausible interval
+> that is biased by construction. Coverage remains comparable **across retrievers on the same
+> impression sample**, which is how the harness reports it.
+
+### F25 — The first CI-bearing numbers: BM25 beats nothing on either dataset
+Full harness, small tier, 800 evaluated impressions per dataset (from a 4,000-impression val slice),
+B = 1000 seeded bootstrap, BM25 at the F23 val-chosen parameters. `results/eval_*.json`.
+
+**EB-NeRD — candidate generation (corpus regime):**
+
+| Retriever | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| **Recency** (ignores the user) | **0.9050 [0.8850, 0.9237]** | **0.9463 [0.9300, 0.9600]** | **0.9688 [0.9562, 0.9800]** |
+| BM25 + 24h window | 0.2475 [0.2175, 0.2775] | 0.2475 [0.2175, 0.2775] | 0.2475 [0.2175, 0.2775] |
+| Popularity | 0.0063 [0.0013, 0.0125] | 0.0100 [0.0037, 0.0163] | 0.0262 [0.0150, 0.0375] |
+| BM25, full corpus | 0.0075 [0.0025, 0.0138] | 0.0125 [0.0050, 0.0200] | 0.0200 [0.0100, 0.0300] |
+| Random | 0.0000 | 0.0000 | 0.0000 |
+
+**MIND — candidate generation:**
+
+| Retriever | recall@50 | recall@100 | recall@200 |
+|---|---|---|---|
+| **Popularity** | **0.0468 [0.0340, 0.0609]** | **0.0682 [0.0531, 0.0861]** | **0.1415 [0.1187, 0.1649]** |
+| BM25 | 0.0116 [0.0054, 0.0189] | 0.0159 [0.0086, 0.0240] | 0.0217 [0.0136, 0.0310] |
+| Random | 0.0004 [0.0000, 0.0013] | 0.0007 [0.0000, 0.0017] | 0.0007 [0.0000, 0.0017] |
+
+With CIs attached, F21's claims sharpen into non-overlapping statements:
+
+1. **BM25's full-corpus CI overlaps popularity's on EB-NeRD** — they are statistically
+   indistinguishable. The 24h window is the only thing that separates BM25 from the floor, and its CI
+   is far clear of both.
+2. **On MIND, popularity beats BM25 with non-overlapping CIs at every K** — and MIND has no publish
+   times (F20), so the window that rescues EB-NeRD is unavailable. This is now a measured claim, not
+   an observation.
+3. **Random is not quite zero on MIND** (0.0004) but is exactly zero on EB-NeRD, because EB-NeRD's
+   corpus is 3× smaller *and* its clicks concentrate on ~0.6% of articles.
+
+**The slate regime tells a completely different and much duller story:**
+
+| EB-NeRD | AUC | nDCG@10 |
+|---|---|---|
+| BM25 + 24h | 0.5243 [0.5002, 0.5467] | 0.4657 [0.4465, 0.4861] |
+| Recency | 0.5047 [0.4841, 0.5240] | 0.4281 [0.4095, 0.4487] |
+| Random | 0.4810 [0.4591, 0.5022] | 0.4191 [0.4019, 0.4373] |
+
+**Every AUC is within noise of 0.5, and random scores nDCG@10 = 0.42.** That is not a bug: EB-NeRD
+slates average 11–12 items with exactly one click (F7), so nDCG@10 covers nearly the whole slate and
+even a random permutation puts the single positive in a decent position often enough. The plan
+predicted this ("nDCG@10 ≈ nDCG@5 exactly — slates are ~11 items; expected, not a bug").
+
+*Consequence:* **recall@K in the corpus regime is the only metric currently discriminating between
+retrievers.** The slate metrics are what Codabench scores, so they cannot be dropped — but reporting
+them without the "random gets 0.42" reference row would badly mislead. Every slate table must carry
+the random baseline.
+
+### F26 — Beyond-accuracy exposes the popularity-collapse trade-off cleanly
+Same run. The D3 prediction that these oppose accuracy is visible in one table:
+
+| EB-NeRD retriever | diversity | novelty | coverage |
+|---|---|---|---|
+| BM25, full corpus | 0.6979 [0.6907, 0.7046] | 12.61 [12.60, 12.61] | **0.5037** (no CI) |
+| BM25 + 24h | 0.8080 [0.8056, 0.8104] | 11.67 [11.63, 11.71] | 0.0110 (no CI) |
+| Recency | 0.8313 [0.8308, 0.8319] | 11.30 [11.27, 11.33] | 0.0147 (no CI) |
+| Popularity | 0.7924 (zero width) | **8.64** (zero width) | 0.0096 (no CI) |
+| Random | 0.8650 (zero width) | 12.71 (zero width) | 0.0096 (no CI) |
+
+Three things worth the design note:
+
+- **Popularity's novelty (8.64) is 4 bits below everything else** — it recommends exactly the
+  articles everyone already clicked, which is the definition of un-novel. Its zero-width CI is
+  correct, not a bug: it returns the *same list to every user*, so there is no between-impression
+  variation to bootstrap.
+- **The recency filter costs 46× coverage** (0.5037 → 0.0110) while buying 33× recall. That is the
+  sharpest accuracy-vs-coverage trade-off measured, and it is exactly the D3 exhibit.
+- **Random has the highest diversity (0.8650)**, confirming diversity alone is not a quality signal —
+  it must always be read against an accuracy column.
+
 ## Decisions taken
 
 | # | Decision | Rationale | Where |
@@ -313,6 +512,195 @@ Next action is the top unchecked item.
 - [ ] Phase 5: submissions + note
 
 ## Log
+
+### 2026-08-25 — Phase 2 + Phase 4 built; decision round; docs split
+**Built:** `src/retrieval/` (BM25 via `bm25s`, own reference implementation, tokeniser, parallel
+sweep runner) and `src/eval/` (metrics in both regimes, bootstrap, slices, harness, runner).
+69 tests pass. Findings **F21–F26**.
+
+**Docs restructured.** `architecture.md` had grown to ~1180 lines mixing *what the system is* with
+*what we debated*. Split:
+
+| File | Holds | Status |
+|---|---|---|
+| `architecture.md` | current architecture, the machinery, measured dataset facts | Part D marked **superseded** |
+| **`decisions.md`** (new) | brief options + combinational effects, decisions with rejected alternatives, open questions, drawbacks | **The Q6 design-note source** |
+| `execution_plan_log.md` (this file) | measurements and dated changes | Also the **architecture changelog** — no separate one |
+
+Decided: architecture changes are logged here as dated entries rather than in a changelog inside
+`architecture.md`, so there is one chronology, not two.
+
+**Decisions taken this round** (full reasoning + costs in `decisions.md`):
+
+| ID | Decision | Notable because |
+|---|---|---|
+| D-SPLIT | Keep the existing rule → 7 days test on EB-NeRD, 1 day on MIND | "Last 7 days" is **impossible on MIND** — see F27 |
+| D-LEX-QUERY | `last_n = 20`, logarithmic position decay | Mild decay by request; positional not temporal on MIND (F1) |
+| D-LEX-FIELDS | Title + abstract kept, title-only as a measured ablation | F28 — abstracts are 75% of the index for an effect inside the CI |
+| D-COLD | Cold start `< 7` clicks; rising+popular fallback, `α = 0.7`, train-only | The fallback flag **is** the Q9 with/without pair |
+| D-ENC | Own `xlm-roberta-base` (768) primary; large (1024) + MiniLM (384) ablations | Provided mBERT is **768**, so same-dim head-to-head |
+| D-POOL | Conditional: coherence ≥ τ → mean; else recent-half mean, else max-pool | Avoids the meaningless centroid |
+| D-ANN | Brute force on demo/small (exact ceiling), FAISS HNSW on large | ScaNN rejected; **HNSW is CPU** — GPU is for the encoder |
+| D-BUDGET | **28 cores / 28 GB, all-inclusive** (was 26/26 per-stage) | Applied to `src/resources.py` and the Makefile |
+| D-STORE | No change — the store is already parquet/polars-native | Vectors will join as `vectors.parquet` on `article_id` |
+| D-C2 | Define the `Reranker` seam now, ship only an identity implementation | Building a real ranker is C-2 and costs C-1's marks |
+
+### F27 — A 7-day test split is physically impossible on MIND
+Measured from the built store manifests:
+
+| Dataset | Total labelled span | Realised test |
+|---|---|---|
+| MIND | **6.0 days** (2019-11-09 00:00 → 11-15 23:58) | 1 day |
+| EB-NeRD | 14.0 days (2023-05-18 07:00 → 06-01 06:59) | **7 days** |
+
+MIND's *entire* labelled range is under seven days, so a 7-day test window would leave no training
+data. *Consequence:* the split **rule** stays constant across datasets (hold out the official test
+period, carve val from the train tail) and the **realised spans differ** because the datasets do —
+which is F4's argument, now with the specific numbers that make it unarguable. Report realised spans
+per dataset, never a single "N days" claim.
+
+Secondary consequence worth a note sentence: MIND's test is a *single day* of news, so one day's
+topical anomaly moves every MIND number. EB-NeRD's 7-day test averages over a week.
+
+### F28 — Abstracts are 75% of the lexical index and buy an effect inside the CI
+Q2.1 mandates indexing title + abstract. Measured what that actually contributes.
+
+**Index composition:**
+
+| Corpus | Title tokens (mean) | Abstract tokens (mean) | Abstract share of indexed tokens | Empty abstracts |
+|---|---|---|---|---|
+| MIND | 11.2 | 36.1 | **76.3%** | 3,415 (5.2%) |
+| EB-NeRD | 6.8 | 18.3 | **72.8%** | 1,709 (8.2%) |
+
+**Contribution** (EB-NeRD, BM25 k1=1.6 b=1.0 last_n=15, 24h window, n=800):
+
+| Indexed text | recall@50 |
+|---|---|
+| Title + abstract | 0.2475 |
+| Title only | 0.2362 |
+
+**+0.011, against a CI half-width of ~0.030 (F25) — statistically indistinguishable.** Three quarters
+of the index buys an effect too small to detect at this sample size.
+
+*Decision:* keep title+abstract (Q2.1 is binding) and **report title-only as an ablation row**. A null
+result reported *as* a null result is a finding: "the mandated field pair is not measurably better
+than titles alone, despite being 75% of the index." The MIND title-only arm timed out and is still to
+be run — do not report a MIND figure until it is.
+
+### F29 — Session context exists only on EB-NeRD, and is thinner than expected
+From the built store:
+
+| Dataset | Rows | Non-null `session_id` | Unique sessions | Mean impressions/session |
+|---|---|---|---|---|
+| MIND | 141,265 | **0 (0.0%)** | — | — |
+| EB-NeRD | 209,597 | 209,597 (100%) | 108,976 | **1.9** (max 24) |
+
+Two consequences. First, session context is **structurally unavailable on MIND** — it is one of the
+brief's three named behavioural signals and it cannot enter any cross-dataset claim. Second, even on
+EB-NeRD a "session" averages **1.9 impressions**, so session context means roughly *one prior
+impression* — a much thinner signal than the phrase suggests.
+
+*Decision:* **defer to C-2** (open question O6). Building it is a day of work for a signal that may be
+undetectable, and C-2 is explicitly click-log modelling, so it lands there naturally. Named as
+considered-and-deferred rather than overlooked.
+
+### F30 — `faiss-cpu` 1.15.0 is broken on this stack; pin lower
+`import faiss` raises `NameError: name 'SuperKMeans' is not defined` from faiss's own
+`class_wrappers.py` — a packaging defect in 1.15.0, not a usage error. Pinned to **1.11.0**.
+
+Also settled while choosing: **`faiss-gpu` is not on PyPI** for current versions (conda-only and
+CUDA-version-sensitive), so `faiss-cpu` is the practical choice. This costs nothing — **HNSW graph
+search is CPU-bound by design**, and the 28-core budget suits it better than 8 GB of VRAM. The RTX
+4060 earns its place on the *encoder forward pass*, which is the genuinely VRAM-bound step. Worth
+stating explicitly so nobody assumes the GPU accelerates retrieval.
+
+### F31 — HNSW is fast but loses 11–66% of the exact answer; the ANN-vs-exact gap must be reported
+Benchmarked FAISS 1.11.0, `IndexHNSWFlat(M=32, efConstruction=200)`, inner product on L2-normalised
+vectors, 28 threads, 200 queries, measured against `IndexFlatIP` as ground truth. **Random vectors**
+— see the caveat below.
+
+| Corpus | n | d | exact | HNSW ef=128 | speedup | **recall@200 vs exact** |
+|---|---|---|---|---|---|---|
+| EB-NeRD small | 20,738 | 768 | 190 ms | 14.8 ms | 12.8× | **0.7700** |
+| MIND small | 65,238 | 768 | 888 ms | 36.3 ms | 24.5× | **0.5778** |
+| EB-NeRD large | 125,541 | 1024 | 1,677 ms | 60.1 ms | 27.9× | **0.4461** |
+
+`efSearch` trades recall for latency, and the trade is steep:
+
+| Corpus | ef=64 | ef=128 | ef=256 |
+|---|---|---|---|
+| EB-NeRD small | 0.6197 | 0.7700 | 0.8890 |
+| MIND small | 0.4469 | 0.5778 | 0.7178 |
+| EB-NeRD large | 0.3402 | 0.4461 | 0.5777 |
+
+Build cost is not free either: 4.1 s / 23.3 s / **74.4 s**, and 514 MB of vectors at the large tier.
+
+> [!warning] These numbers are a worst case — the benchmark used *random* vectors
+> Uniform-random vectors in 768–1024 dimensions are close to mutually orthogonal, which is the
+> hardest possible case for a proximity graph: there is no cluster structure for HNSW to exploit.
+> **Real embeddings are strongly clustered, so measured recall on actual article vectors should be
+> substantially higher.** This must be re-run on the real vectors before any of it is reported —
+> quoting 0.4461 as *our* ANN recall would be wrong in the pessimistic direction.
+>
+> What the benchmark does establish regardless of vector distribution: the **latency** figures, the
+> **build times**, the **memory**, and the *shape* of the `efSearch` trade-off.
+
+*Consequences:*
+
+1. **The D-ANN decision is confirmed, and for a sharper reason than convenience.** Brute force on
+   demo/small is not merely permitted by Q3.2 — at 190 ms/query on EB-NeRD small it is perfectly
+   affordable, and it is *exact*, so it is the only defensible source of a headline recall number.
+2. **Never report ANN recall without the exact baseline beside it.** An `efSearch` left at a low
+   default silently caps recall, and the result looks like a weak encoder rather than an
+   under-tuned index. This is the Q6 "where it breaks at 10×" story with real numbers: recall falls
+   from 0.77 → 0.45 as the corpus grows 6× and the dimension grows 1.33×.
+3. **`efSearch` must be swept and reported**, not left at a default (open question O2).
+
+### F32 — Full-corpus retrieval is the wrong algorithm for the submission path (16× fix)
+The first submission run produced predictions at **162 impressions/s** on MIND-large test — about
+**4 hours** for one file. Cause: for every impression it ran a top-500 retrieval over all 120,961
+articles, then discarded everything outside that impression's ~37-item slate.
+
+The ranking only ever needs the slate scored. Three approaches, measured on the real MIND-large
+corpus:
+
+| Approach | Rate | Verdict |
+|---|---|---|
+| `retrieve(k=500)` over the full corpus | **162/s** | 4 hours per file |
+| `bm25s` `weight_mask` restricted to the slate | **173/s** | Numerically exact, but the mask filters *selection*, not the scan — no real gain |
+| **Doc-major scoring of the slate only** | **~2,560/s** | **16× faster**; ~15 min per file |
+
+*Decision:* `BM25Retriever.score_subset()` scores the slate directly, doc-major, and the submission
+path uses it. `retrieve()` is unchanged and remains the source of every measured metric.
+
+> [!warning] `score_subset()` and `retrieve()` do NOT agree numerically — and that is deliberate
+> `retrieve()` delegates to `bm25s` (Lucene IDF variant); `score_subset()` uses the textbook
+> Robertson formula. Reproducing `bm25s`'s exact scores was attempted and abandoned: a careful
+> replication of its documented formula still disagreed by up to **106 in absolute score** on the
+> real corpus, so the library is doing something further not worth reverse-engineering here.
+>
+> **What was verified instead: the two produce equivalent rankings.** Measured 0 discordant pairs out
+> of 780 on the toy corpus — every apparent list-order difference is a score *tie* broken differently.
+> A regression test asserts zero discordant pairs rather than list equality, because a tie is not a
+> disagreement.
+>
+> This is acceptable **only** because the submission format is a permutation: nothing but the ordering
+> is ever written. `score_subset()` must never be used for a reported metric.
+
+### F33 — Both large test sets are now extractable; EB-NeRD's arrived separately
+`ebnerd_large.zip` was verified to contain **train/ and validation/ only — no test member**, so the
+EB-NeRD leaderboard submission was blocked on `ebnerd_testset.zip`, a separate download. It has since
+been provided and staged at `data/work/ebnerd/testset/` (1.8 GB: `articles.parquet` + `test/`).
+
+Added a **`large` tier** to `src/data/extract.py` (`mind/large_test`, `ebnerd/large`) and a `test`
+entry to `SPLIT_NAMES` for both datasets, marked in-code as the unlabelled leaderboard split that can
+never contribute an offline metric (F14).
+
+> [!warning] The submission corpus must be the test split's own article file
+> MIND-large test ships **120,961 articles** against small-train's 51,282 (F14). Indexing train's
+> corpus would leave most test candidates unscored, so they would sink to the bottom of every slate —
+> the same recall-ceiling trap as F17 and D-CORPUS, in the submission path rather than the eval path.
+> `codabench.py` therefore requests `articles(splits=(test_split,))`.
 
 ### 2026-08-18 — Phase 1 steps 3–5 built and run
 - `src/data/clean.py` (unify + drive), `src/data/split.py` (temporal split, truncation, leakage

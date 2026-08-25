@@ -522,6 +522,77 @@ that cluster is ~0.09.
 
 ---
 
+# Part 4c · The documented improvement path: Polars + GPU scoring
+
+Measured, costed, and **deliberately not built for C-1**. Recorded here so the decision is
+evidence-based rather than an omission.
+
+## What it is
+
+Replace the row-by-row submission loop with a **vectorised dataframe pipeline**: explode the
+candidate lists into a table, join scores, rank with a window function, group back. Score the
+semantic side on the GPU in large batches instead of one slate at a time.
+
+This is the shape the brief's v2 compute note points at — *"ensure your prediction pipeline is
+memory-efficient (use Polars, PyArrow, or batch processing)"* — and the shape the original
+exploratory notebooks used.
+
+## What it would buy, measured
+
+**GPU batched slate scoring, 125,541 articles × 256-d:**
+
+| Batch | µs/slate | slates/s |
+|---|---|---|
+| 1 | 11,793 | 85 — *slower than CPU*, all launch overhead |
+| 256 | 11.83 | 84,510 |
+| **4,096** | **0.55** | **1,821,630** |
+| 32,768 | 0.51 | 1,943,130 |
+
+Against the current CPU path at **623 µs/slate (1,605 slates/s)**, that is **~1,200× on the semantic
+half**. Note batch=1 is *worse* than CPU — the entire gain is batching, and the GPU only makes it
+dramatic.
+
+**End to end on EB-NeRD fusion (13.3M slates):**
+
+| | setup | scoring | total |
+|---|---|---|---|
+| Current | 168 s | 5,189 s | **89 min** |
+| GPU semantic side | 168 s | 2,075 s | **37 min** |
+
+**~52 minutes saved, and then it stops** — because **BM25 becomes the new floor**. The lexical half
+is sparse-matrix CPU work; moving it would need a separate GPU sparse implementation. The I/O floor
+(parquet + 807K histories) is ~3 minutes and is unavoidable.
+
+## Why not now
+
+| | |
+|---|---|
+| **The score would not change** | Same BM25 and cosine arithmetic, rearranged. Same ranking, same leaderboard result. This is *purely* a speed optimisation. |
+| **It carries a real correctness risk** | F32 showed how easily BM25 arithmetic drifts when reimplemented — I could not reproduce `bm25s`'s scores and settled for verified ranking agreement (0 discordant pairs in 780). A rewrite needs that same paired verification, which is an hour on its own. |
+| **Effort: ~4–6 hours** | Not a library swap. It restructures `codabench.py`, both retrievers' scoring paths, and the verification. |
+| **The deadline is the binding constraint** | Q7.3 and Q7.4 are stated deliverables and unstarted. Those cost marks; 52 minutes of background compute does not. |
+| **Q6 is already answered** | F49–F53 give a measured account of what breaks at 10×. "We could have been 2.4× faster with a GPU dataframe pipeline" is a design-note sentence, not something that must be built. |
+
+## How to do it, when it is worth doing
+
+**Branch, do not back up.** Git already preserves `main`; a working copy adds nothing but confusion.
+
+```
+git checkout -b polars-gpu
+```
+
+`main` stays submittable throughout. The merge gate is a **paired-difference test** (F46) between
+the new path and the current one on the same impressions: the rankings must agree, or the rewrite
+has changed the answer rather than the speed.
+
+**The argument for doing it in C-2 is the compounding one:** every ablation in this component cost
+minutes of compute, and several were left underpowered at n=800 because larger runs were slow
+(F46's dedup test resolved nothing at 4/800). A 2.4× faster pipeline means larger samples, which
+means the paired tests can actually resolve the differences they are asked about. **Speed buys
+statistical power, which is what most of the null results here were short of.**
+
+---
+
 # Part 5 · The earlier decision record (merged from architecture.md Part D)
 
 Moved here on 2026-08-25 when `architecture.md` was reduced to describing the system. This is the

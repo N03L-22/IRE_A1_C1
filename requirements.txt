@@ -13,7 +13,12 @@
 # yet; pin them once they are, so this file never claims an untested version.
 
 # --- Phase 1: data pipeline (installed, tested) ---
-polars==1.43.2          # dataframe layer; native list dtypes, multithreaded
+polars==1.43.2          # exploratory notebooks only -- src/ uses pyarrow
+                        # directly and imports no polars. The readers stream
+                        # records and never need a dataframe layer, which also
+                        # keeps the polars-vs-pandas question out of the
+                        # interface. Brief v2 names "Polars, PyArrow, or batch
+                        # processing"; we use the second and third.
 pyarrow==24.0.0         # parquet I/O (EB-NeRD's native format)
 numpy==1.26.4
 

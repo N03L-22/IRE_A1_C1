@@ -491,3 +491,11 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 03:06 · `0df5ffb1`
 
 > we can try the ebnard fusion with 2 workers later. but the lexical bein g affected by 5 or 6 factors seem very simple. check if there was any other options or approachs for lexical that would improve or for semantic that would improve the MIND? and honestly semantic is supposed to be a better version that lexical and should take almost same time with the better CPU/GPU parallel computes
+
+### 2026-08-26 03:20 · `0df5ffb1`
+
+> what about polar? are we using tht? also would this batching significantly reduce the ebnerd time taken?
+
+### 2026-08-26 03:28 · `0df5ffb1`
+
+> yes, record it and move to the ai log. and afterwards we can branch this to rewrite for this Polar GPU? or back up the current code and then improve? because the more faster the operations are, more we can test the fine tuning?

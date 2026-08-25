@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F51.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F52.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -432,9 +432,16 @@ Extending F49's benchmark to a million vectors, clustered, 384-d:
 | 125,541 | 580 ms | 9.0 ms | 64× | 0.9875 | 4.0 s |
 | **1,000,000** | **4,603 ms** | **28.7 ms** | **160×** | **0.8332** | 155.9 s |
 
-**Both sides of the trade-off move at 10×, in opposite directions.** Exact search becomes unusable
-(4.6 s *per query* — 2.37M of them would take 3 days), while HNSW's speed advantage grows to 160×
-but it starts **losing 17% of the true answer** at the ef that was lossless at 125K.
+**Both sides of the trade-off move at 10×, in opposite directions.** Exact search costs **22.8 ms
+per query** (the 4,603 ms figure is for a batch of 200), so 2.37M queries would take ~15 hours,
+while HNSW's speed advantage grows to 160× but it starts **losing 17% of the true answer** at the
+`ef` that was lossless at 125K.
+
+> [!warning] Correction — an earlier version of this finding said "4.6 s per query"
+> That was the batch time for 200 queries read as a per-query cost, a 200× error. Exact search at
+> 1M vectors is 22.8 ms/query: slow enough to matter over millions of impressions, not slow enough
+> to be absurd. The conclusion survives — see F52, which shows the `ef` dial recovers the recall
+> cheaply.
 
 *This is the Q6 answer, measured rather than projected:* the pipeline does not break at 10× because
 of memory or the model — it breaks because **the ANN index's recall/latency trade-off stops being
@@ -461,6 +468,40 @@ worth knowing, since F22/F41 showed window and K *do* interact.
 *Consequence:* **D4's `last_n` is confirmed as inside the noise in both regimes.** The curve peaks
 near 20 while we ship 15 — a candidate for change, not a demonstrated improvement, and the honest
 report is the curve plus the non-significance rather than a claim that 20 is better.
+
+### F52 — `efSearch` must scale with the corpus; a fixed 128 loses a third of the answer at 1M
+F50 reported HNSW at 1M vectors recovering only 0.83 of the exact answer, which read as a hard limit
+of the method. It is not — it is a **default that stops fitting**. Swept `efSearch` at 1M, M=16,
+clustered vectors. `results/ann_sweep_1m.json`.
+
+Exact search baseline: **22.8 ms/query**.
+
+| efSearch | recall vs exact | ms/query | vs exact |
+|---|---|---|---|
+| 64 | 0.5195 | 0.05 | 474× |
+| **128** *(old default)* | **0.6782** | 0.08 | 286× |
+| 256 | 0.8108 | 0.14 | 167× |
+| 512 | 0.9071 | 0.22 | 105× |
+| **1024** | **0.9588** | 0.34 | **68×** |
+
+**Recall is bought back almost free.** Going 0.68 → 0.96 costs **0.26 ms/query** and is *still 68×
+faster than exact search*. The "17% loss at 10× scale" was a tuning failure, not a ceiling.
+
+*Why a fixed value cannot work:* HNSW explores `efSearch` candidates **regardless of corpus size**,
+so the *fraction* of the corpus inspected shrinks as it grows. ef=128 inspects ~0.1% of 125K and
+~0.013% of 1M. A value that is lossless at one scale is guaranteed to degrade at ten times it.
+
+*Fix:* `default_ef_search(n)` derives the budget from the corpus — 128 up to 50K, 256 to 200K, 512
+to 500K, 1024 above. An explicit value still wins so sweeps can pin what they measure.
+
+> [!important] This changes the Q6 answer
+> F50 said the pipeline "breaks at 10× because the ANN trade-off stops being free". With `ef` scaled
+> it does **not** break: 0.96 recall at 68× the speed of exact, on a 1.54 GB index built in 105 s.
+> The honest 10× statement is now: *the defaults break, the method does not* — and the cost of
+> fixing them is a quarter of a millisecond per query.
+
+**Also corrected in F50:** it quoted exact search at "4.6 s per query". That was the batch time for
+200 queries; the per-query cost is **22.8 ms**, a 200× error in the pessimistic direction.
 
 ## Findings
 

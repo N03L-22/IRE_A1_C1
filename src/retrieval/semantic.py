@@ -43,9 +43,39 @@ log = logging.getLogger(__name__)
 DEFAULT_COHERENCE_TAU = 0.35
 
 #: Corpus size above which brute force stops being the sensible default.
-#: Below this, exact search costs ~190 ms/query on 20K x 768 -- affordable,
-#: and exact beats approximate when you can afford it.
+#: Below this, exact search costs ~99 ms/query on 20K x 384 -- affordable, and
+#: exact beats approximate when you can afford it. Above it, F49 measured HNSW
+#: at 62-69x the speed for 0.99+ recall, so the approximation is close to free.
 BRUTE_FORCE_LIMIT = 200_000
+
+#: `efSearch` must scale with the corpus. Measured at 1M vectors (F52), a
+#: fixed ef=128 -- lossless at 125K -- collapses to **0.68 recall**:
+#:
+#:   ef=  64  recall 0.5195   0.05 ms/q   474x faster than exact
+#:   ef= 128  recall 0.6782   0.08 ms/q   286x
+#:   ef= 256  recall 0.8108   0.14 ms/q   167x
+#:   ef= 512  recall 0.9071   0.22 ms/q   105x
+#:   ef=1024  recall 0.9588   0.34 ms/q    68x   <- the knee
+#:
+#: Recall is bought back almost free: 0.68 -> 0.96 costs 0.26 ms/query and is
+#: still 68x faster than exact search. A single global default cannot serve
+#: both 20K and 1M, so it is derived from the corpus size instead.
+EF_SEARCH_BY_SIZE = ((50_000, 128), (200_000, 256), (500_000, 512))
+EF_SEARCH_LARGE = 1024
+
+
+def default_ef_search(n_vectors: int) -> int:
+    """Pick `efSearch` from the corpus size (F52).
+
+    A graph search explores `efSearch` candidates regardless of how many
+    vectors exist, so the *fraction* of the corpus it inspects shrinks as the
+    corpus grows -- which is exactly why a value that is lossless at 125K
+    loses a third of the answer at 1M.
+    """
+    for limit, ef in EF_SEARCH_BY_SIZE:
+        if n_vectors <= limit:
+            return ef
+    return EF_SEARCH_LARGE
 
 
 def log_decay_weights(n: int) -> np.ndarray:
@@ -134,7 +164,7 @@ class SemanticRetriever:
         tau: float = DEFAULT_COHERENCE_TAU,
         last_n: int = 20,
         batch_size: int = 128,
-        ef_search: int = 128,
+        ef_search: int | None = None,
         vectors: np.ndarray | None = None,
         vector_ids: list[str] | None = None,
     ) -> None:
@@ -143,6 +173,7 @@ class SemanticRetriever:
         self.tau = tau
         self.last_n = last_n
         self.batch_size = batch_size
+        #: None means "derive from corpus size at index time" (F52).
         self.ef_search = ef_search
         self.name = f"semantic({model_key},tau={tau:g},n={last_n})"
 
@@ -210,7 +241,9 @@ class SemanticRetriever:
         idx = faiss.IndexHNSWFlat(dim, 32, faiss.METRIC_INNER_PRODUCT)
         idx.hnsw.efConstruction = 200
         idx.add(self._vecs)
-        idx.hnsw.efSearch = self.ef_search
+        ef = self.ef_search or default_ef_search(len(self._ids))
+        idx.hnsw.efSearch = ef
+        self.ef_search = ef
         self._index = idx
         self.name += "+hnsw"
         log.info(

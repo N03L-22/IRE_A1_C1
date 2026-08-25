@@ -104,3 +104,36 @@ def test_length_sorted_batching_does_not_change_results() -> None:
     )
     assert np.abs(batched[:8] - one_at_a_time).max() < 1e-2, "batching changed the vectors"
     assert np.allclose(np.linalg.norm(batched, axis=1), 1.0, atol=1e-4)
+
+
+def test_ef_search_scales_with_corpus_size() -> None:
+    """A fixed efSearch silently degrades as the corpus grows (F52).
+
+    HNSW explores `efSearch` candidates regardless of how many vectors exist,
+    so the *fraction* of the corpus inspected shrinks with scale. Measured at
+    1M vectors, the ef=128 that was lossless at 125K collapses to 0.68 recall
+    -- a third of the answer lost, with no error and no warning.
+
+    Recall is cheap to buy back: ef=1024 restores 0.9588 while still being 68x
+    faster than exact search. So the default is derived from the corpus rather
+    than pinned.
+    """
+    from src.retrieval.semantic import default_ef_search
+
+    small = default_ef_search(20_738)
+    large = default_ef_search(1_000_000)
+    assert small < large, "ef must grow with the corpus"
+    assert large >= 1024, f"1M corpus needs ef>=1024 for ~0.96 recall, got {large}"
+
+    # Monotone: a bigger corpus never gets a smaller budget.
+    sizes = [10_000, 50_000, 200_000, 500_000, 2_000_000]
+    efs = [default_ef_search(n) for n in sizes]
+    assert efs == sorted(efs), efs
+
+
+def test_explicit_ef_search_is_respected() -> None:
+    """An explicit value must win, so the sweep can pin what it measures."""
+    from src.retrieval.semantic import SemanticRetriever
+
+    assert SemanticRetriever(ef_search=64).ef_search == 64
+    assert SemanticRetriever().ef_search is None  # derived at index time

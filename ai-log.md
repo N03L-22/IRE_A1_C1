@@ -469,3 +469,7 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 01:54 · `0df5ffb1`
 
 > run the last_n sweep inside the 24h window also [Image #10]? which?
+
+### 2026-08-26 02:26 · `0df5ffb1`
+
+> for large 10x cases, can the HSNW be optimized for slightly slower but accurate / lower loss? and then based on recent findings update the params to fine tune.

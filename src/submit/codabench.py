@@ -552,7 +552,11 @@ def main(argv: list[str] | None = None) -> int:
     retriever.index(list(articles.values()))
     log.info("indexed %s in %.1fs", retriever.name, time.perf_counter() - t0)
 
-    txt = args.out_dir / f"{args.dataset}_prediction.txt"
+    # Name by retriever so runs never overwrite each other. Comparing a BM25
+    # submission against a fusion one is a reportable result (F39), and that
+    # is impossible if the second run silently replaces the first.
+    stem = f"{args.dataset}_{args.retriever}"
+    txt = args.out_dir / f"{stem}_prediction.txt"
     if hasattr(reader, "impressions_row_group") and budget.n_jobs > 1:
         # Parquet-backed readers expose row groups, the natural unit of
         # parallelism. MIND is TSV and has none, so it takes the serial path.
@@ -576,12 +580,12 @@ def main(argv: list[str] | None = None) -> int:
     # way -- the file was correct, only its name inside the zip was not.
     # The local .txt keeps its dataset prefix so the two datasets' outputs do
     # not overwrite each other; only the arcname is fixed.
-    zip_path = args.out_dir / f"{args.dataset}_prediction.zip"
+    zip_path = args.out_dir / f"{stem}_prediction.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         zf.write(txt, arcname=SUBMISSION_MEMBER[args.dataset])
     log.info("zipped -> %s (%.1f MB)", zip_path, zip_path.stat().st_size / 1e6)
 
-    meta = args.out_dir / f"{args.dataset}_prediction.meta.json"
+    meta = args.out_dir / f"{stem}_prediction.meta.json"
     meta.write_text(json.dumps({
         "dataset": args.dataset, "tier": args.tier,
         "retriever": retriever.name, "retriever_kind": args.retriever, "params": params,

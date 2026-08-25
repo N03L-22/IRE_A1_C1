@@ -42,3 +42,4 @@ data/store/embeddings/
 
 # Backup of the superseded bm25-only submission
 submissions/*.bak
+submissions/*_prediction.txt

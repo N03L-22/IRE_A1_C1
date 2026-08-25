@@ -243,3 +243,20 @@ def test_rank_convention_matches_ebnerd_upstream() -> None:
         cands = [f"c{i}" for i in range(len(scores))]
         ours = rank_candidates(cands, dict(zip(cands, scores)))
         assert ours == upstream(scores), f"{scores}: ours {ours} vs upstream {upstream(scores)}"
+
+
+def test_submission_filenames_are_namespaced_by_retriever() -> None:
+    """Two retrievers must not overwrite each other's submission.
+
+    Comparing a BM25 submission against a fusion one on the same leaderboard
+    is a reportable result (F39) -- and impossible if the second run silently
+    replaces the first. The outer zip name is free (Codabench tracks by
+    submission id, not filename); only the member inside is constrained.
+    """
+    import re
+    src = Path("src/submit/codabench.py").read_text()
+    assert 'stem = f"{args.dataset}_{args.retriever}"' in src
+    for suffix in ("_prediction.txt", "_prediction.zip", "_prediction.meta.json"):
+        assert f'f"{{stem}}{suffix}"' in src, f"{suffix} not namespaced"
+    # The member name must still come from the per-competition table.
+    assert "SUBMISSION_MEMBER[args.dataset]" in src

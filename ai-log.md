@@ -419,3 +419,11 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 00:25 · `0df5ffb1`
 
 > i have submitted. lets make iterations and still submit more with upgraded tests. also ensure the submission formats match the requirement. check online
+
+### 2026-08-26 00:45 · `0df5ffb1`
+
+> can the same file name be used again? or should i add a v2 suffix?
+
+### 2026-08-26 00:47 · `0df5ffb1`
+
+> yes, keep both side by side for the report, ,save in another name or backup

@@ -12,8 +12,10 @@
   "duplicates_dropped": 58858,
   "row_groups": 51,
   "workers": 2,
-  "note": "merged from shards after the first run stalled in swap; scoring output unaffected",
+  "note": "merged from shards after the first run stalled in swap (F38); repacked 2026-08-26 with member 'predictions.txt' -- EB-NeRD's scorer wants the plural form, unlike MIND's 'prediction.txt'",
   "generated_at": "2026-08-25T23:00:00",
   "bytes": 523863118,
-  "zip_bytes": 164313004
+  "zip_bytes": 164313006,
+  "zip_member": "predictions.txt",
+  "retriever_kind": "bm25"
 }

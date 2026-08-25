@@ -25,8 +25,11 @@ scikit-learn==1.8.0     # TF-IDF baseline, cosine utilities
 pytest==9.0.3
 psutil==5.9.8           # resource-budget resolution
 
-# --- Phase 2/3: not yet installed, pin when they are ---
-# bm25s                 # fast BM25 with a persistable index
+bm25s==0.3.10           # Phase 2 workhorse; sparse-matrix BM25 (D1)
+faiss-cpu==1.11.0       # Phase 3 ANN (HNSW). NOT 1.15.0 -- broken import (F30).
+                        # CPU by design: HNSW is CPU-bound, GPU is for the encoder.
+
+# --- Phase 3: not yet installed, pin when it is ---
 # sentence-transformers # multilingual encoder (Phase 3 D2)
 
 # GPU encoder: torch 2.5.1+cu121 is inherited from user-site on the dev

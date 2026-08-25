@@ -11,11 +11,11 @@
 PYTHON  := .venv/bin/python
 RAW     := data/raw
 WORK    := data/work
-N_JOBS  ?= 26
-MEM_GB  ?= 26
+N_JOBS  ?= 28
+MEM_GB  ?= 28
 BUDGET  := --n-jobs $(N_JOBS) --mem-gb $(MEM_GB)
 
-.PHONY: all data data-demo data-artifacts store smoke test clean clean-all help
+.PHONY: all data data-demo data-artifacts store smoke bm25 bm25-sweep eval test clean clean-all help
 
 all: store test
 
@@ -46,6 +46,27 @@ store: data
 ## smoke: walking skeleton end to end on the demo tier
 smoke: data-demo
 	$(PYTHON) -m src.skeleton --dataset ebnerd --tier demo --limit 200 $(BUDGET)
+
+## bm25: BM25 vs baselines on both datasets (Q2, exploratory -- no CIs)
+bm25: store
+	$(PYTHON) -m src.retrieval.run_bm25 --dataset ebnerd $(BUDGET) \
+	    --out results/bm25_ebnerd.json
+	$(PYTHON) -m src.retrieval.run_bm25 --dataset mind $(BUDGET) \
+	    --out results/bm25_mind.json
+
+## bm25-sweep: k1/b/last_n/window sweep on val only, parallel (Q2 D5)
+bm25-sweep: store
+	$(PYTHON) -m src.retrieval.run_bm25 --dataset ebnerd --sweep --limit 4000 \
+	    $(BUDGET) --out results/bm25_sweep_ebnerd.json
+	$(PYTHON) -m src.retrieval.run_bm25 --dataset mind --sweep --limit 4000 \
+	    $(BUDGET) --out results/bm25_sweep_mind.json
+
+## eval: score every retriever through the one harness, with CIs (Q4)
+eval: store
+	$(PYTHON) -m src.eval.run --dataset ebnerd --limit 4000 $(BUDGET) \
+	    --out results/eval_ebnerd.json
+	$(PYTHON) -m src.eval.run --dataset mind --limit 4000 $(BUDGET) \
+	    --out results/eval_mind.json
 
 ## test: run the test suite
 test:

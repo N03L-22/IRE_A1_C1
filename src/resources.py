@@ -19,9 +19,11 @@ from typing import Any
 
 import psutil
 
-#: Ceiling on an *idle* machine, leaving headroom for the OS and editor.
-DEFAULT_N_JOBS = 26
-DEFAULT_MEM_GB = 26.0
+#: Hard ceiling, ALL-INCLUSIVE across every process a run spawns -- not a
+#: per-worker allowance. A parallel sweep divides these among its workers
+#: rather than each worker claiming the full budget.
+DEFAULT_N_JOBS = 28
+DEFAULT_MEM_GB = 28.0
 #: Encoder batch size. This is the VRAM dial and is independent of --mem-gb.
 DEFAULT_BATCH_SIZE = 64
 

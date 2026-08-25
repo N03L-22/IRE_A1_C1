@@ -427,3 +427,11 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 00:47 · `0df5ffb1`
 
 > yes, keep both side by side for the report, ,save in another name or backup
+
+### 2026-08-26 00:49 · `0df5ffb1`
+
+> so each submission will not replace instead add right?
+
+### 2026-08-26 00:57 · `0df5ffb1`
+
+> uploaded ebnerd, check if fusion is done

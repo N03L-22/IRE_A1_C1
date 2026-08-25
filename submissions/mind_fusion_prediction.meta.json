@@ -1,0 +1,33 @@
+{
+  "dataset": "mind",
+  "tier": "large",
+  "retriever": "rrf(bm25+semantic)",
+  "retriever_kind": "fusion",
+  "params": {
+    "k1": 1.6,
+    "b": 0.75,
+    "last_n": 5
+  },
+  "generated_at": "2026-08-26T00:58:32",
+  "budget": {
+    "n_jobs": 28,
+    "mem_gb": 22.42,
+    "batch_size": 64,
+    "available_mem_gb": 24.92,
+    "total_cores": 32,
+    "load_average": 2.04,
+    "scaled_down": true
+  },
+  "lines": 2370727,
+  "cold_slates": 29108,
+  "seconds": 2346.4,
+  "bytes": 291329312,
+  "zip_member": "prediction.txt",
+  "validated": {
+    "lines": 2370727,
+    "malformed": 0,
+    "unique_ids": 2370727,
+    "valid_permutations": 2370727
+  },
+  "expected": "+0.004 AUC vs bm25 per offline harness (F39); inside the CI, so either outcome is informative"
+}

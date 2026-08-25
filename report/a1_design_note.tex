@@ -1,0 +1,229 @@
+\documentclass[10pt,a4paper]{article}
+\usepackage[margin=1.35cm]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+\usepackage{multicol}
+\usepackage{titlesec}
+
+\titlespacing*{\section}{0pt}{6pt}{3pt}
+\titlespacing*{\subsection}{0pt}{4pt}{2pt}
+\titleformat{\section}{\normalfont\large\bfseries}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\normalfont\normalsize\bfseries}{\thesubsection}{0.6em}{}
+\setlist{nosep,leftmargin=1.2em}
+\captionsetup{font=small,skip=2pt}
+\pagestyle{empty}
+\setlength{\parskip}{2pt}
+\setlength{\tabcolsep}{4pt}
+\renewcommand{\arraystretch}{0.95}
+
+\newcommand{\F}[1]{\textcolor{blue!55!black}{\footnotesize[#1]}}
+
+\begin{document}
+
+\begin{center}
+{\large\textbf{CS4.406 Assignment 1 --- Lexical \& Semantic Retrieval: Design Note}}\\[2pt]
+{\small Noel Alex Jacob (2025201085) \quad·\quad
+\href{https://github.com/N03L-22/IRE_A1_C1}{\texttt{github.com/N03L-22/IRE\_A1\_C1}} \quad·\quad
+95 tests \quad·\quad \texttt{make data \&\& make store \&\& make eval}}
+\end{center}
+\vspace{-4pt}
+
+\section{What I built}
+
+Raw archives $\rightarrow$ per-dataset readers $\rightarrow$ \textbf{one unified schema} $\rightarrow$ temporal split
+$\rightarrow$ parquet feature store (42\,s rebuild, both datasets). Two retrievers behind one
+\texttt{Retriever} protocol --- BM25 over title+abstract, and MiniLM embeddings with a brute-force
+exact index --- plus recency, popularity, random, RRF fusion and a popularity-prior blend. One
+\texttt{evaluate()} scores all of them, so Q4.5 holds by construction: there is nowhere else a metric
+can be computed.
+
+\textbf{Two evaluation regimes are kept strictly apart}, because conflating them produces numbers
+that look fine and mean nothing. \emph{Corpus regime}: recall@K over all 21K--65K articles ---
+\emph{did the clicked article survive the cut?} \emph{Slate regime}: AUC/MRR/nDCG over the
+$\sim$11--40 candidates actually shown --- \emph{did you rank it above the others?} Every result row
+carries a \texttt{regime} column.
+
+\section{The constraint that drove every design choice}
+
+Every richer feature EB-NeRD offers is one MIND lacks: body text, click timestamps, publish time,
+session ids (0\% on MIND), provided embeddings. Using any of them for a headline number silently
+converts a \emph{dataset} comparison into a \emph{feature-availability} comparison.
+
+\textbf{Rule adopted: the shared path uses only the intersection} --- title, abstract, category,
+click history. Everything one-sided becomes a labelled single-dataset ablation. This one rule
+resolves the encoder choice, recency weighting, body text and session context together.
+
+\section{Key decisions and rejected alternatives}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}p{2.4cm}p{5.4cm}p{9.3cm}@{}}
+\toprule
+\textbf{Decision} & \textbf{Chosen} & \textbf{Rejected, and why} \\
+\midrule
+Corpus & Union of MIND's two \texttt{news.tsv} (65,238) & Per-split: 23.3\% of dev clicks are on train-absent articles, an \textbf{invisible 0.767 recall ceiling} \F{F2,F20} \\
+Split & Hold out official test, carve val from train tail & Literal ``7 days test'': MIND's \emph{entire} labelled span is 6.0 days \F{F27} \\
+Lexical fields & Title + abstract (Q2.1 mandates) & Title+body --- MIND has no body, breaking comparability \F{F10} \\
+Encoder & \textbf{MiniLM 384-d}, mean-pooled, L2-normalised & \textbf{XLM-R fails the Danish probe} (below); \texttt{[CLS]} pooling; per-language stemming \\
+Index & Brute force (exact; Q3.2 permits it) & HNSW --- both corpora are $<$200K, where exact costs 190--890\,ms and is the recall \emph{ceiling} ANN is measured against \\
+User vector & Log positional decay, $n{=}20$, conditional pooling & Exponential decay collapses the query to 2--3 clicks; plain mean blurs multi-interest users \\
+Session context & \textbf{Dropped}, deferred to C-2 & 0\% coverage on MIND; EB-NeRD sessions average \textbf{1.9 impressions} \F{F29} \\
+Coverage CI & Point estimate, marked \texttt{(no CI)} & Every bootstrap scheme is biased low --- see \S\ref{sec:ci} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\section{Observations}
+
+\subsection{Recency dominates; text matching is secondary \F{F16,F21}}
+
+On EB-NeRD, \textbf{94.3\% of clicks are on articles under 24\,h old} while only $\sim$1.1\% of the
+corpus is that fresh. A retriever that \emph{ignores the user entirely} and returns the newest
+articles scores \textbf{recall@50 = 0.8986}, against BM25's 0.0043 over the full corpus. Restricting
+either retriever to a 24\,h window moves it from $\sim$0.004 to $\sim$0.24 --- a \textbf{33$\times$
+swing from the candidate pool, not the scoring function}.
+
+Candidate generation on news is primarily a \emph{freshness} problem. This is legitimate, not a leak:
+publish time is known at serving time; ranking by \emph{future} engagement would not be.
+
+\subsection{Lexical vs. semantic: the answer flips between datasets \F{Q3.5}}
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{recall@100}, $n{=}4{,}000$ & \textbf{EB-NeRD (Danish)} & \textbf{MIND (English)} \\
+\midrule
+Best overall & recency \textbf{0.9434} [0.9361, 0.9505] & popularity \textbf{0.0688} [0.0615, 0.0763] \\
+Lexical & bm25+24h \textbf{0.2375} [0.2244, 0.2490] & bm25 0.0142 [0.0108, 0.0172] \\
+Semantic & sem+24h 0.2307 [0.2175, 0.2432] & sem \textbf{0.0163} [0.0130, 0.0199] \\
+RRF fusion & 0.0070 --- \emph{no gain} & \textbf{0.0181} [0.0146, 0.0218] --- \emph{best retriever} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{On MIND semantic beats lexical and fusion beats both; on EB-NeRD lexical edges ahead and
+fusion helps nothing.} Fusion exploits disagreement: on EB-NeRD the two retrievers agree (CIs
+overlap heavily), so there is nothing to fuse. A single ``which is better'' answer would be wrong.
+
+\textbf{The slice tells a sharper story.} EB-NeRD recall@100, cold defined as history $\le$ 97
+(q0.25 of observed; median 235):
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lll@{}}
+\toprule
+ & \textbf{cold} ($n{=}1{,}004$) & \textbf{warm} ($n{=}2{,}996$) \\
+\midrule
+semantic + 24h & \textbf{0.2468} [0.2198, 0.2742] & 0.2253 [0.2104, 0.2407] \\
+bm25 + 24h     & 0.2216 [0.1982, 0.2490] & \textbf{0.2428} [0.2276, 0.2588] \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{The ordering crosses over}: semantic wins cold users, lexical wins warm ones. With few
+clicks, word overlap has too few terms to work with while embeddings still place a sparse history
+somewhere meaningful. CIs overlap, so this is suggestive, not established --- but the crossover is
+the shape, and it is what Q3.5 asks for.
+
+\subsection{XLM-RoBERTa cannot separate related from unrelated Danish \F{F37}}
+
+The brief names BERT/XLM-RoBERTa. Before trusting either, a probe embedded 5 obviously-related
+Danish headline pairs and 5 obviously-unrelated ones:
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+Encoder & related & unrelated & margin & verdict \\
+\midrule
+\texttt{xlm-roberta-base} (768-d) & 0.9972 & 0.9954 & \textbf{+0.0018} & \textbf{OVERLAPS} \\
+MiniLM (384-d) & 0.6523 & 0.0253 & \textbf{+0.6271} & SEPARATES \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+XLM-R rates \emph{``Brøndby beat FCK''} and \emph{``a new apple cake recipe''} as 0.995 similar. It
+is trained for masked-language modelling, not to make cosine similarity meaningful, and its vectors
+collapse into a narrow cone. \textbf{A retriever built on it returns arbitrary articles while
+producing perfectly plausible metrics} --- the failure mode this probe exists to catch. MiniLM
+achieves a 348$\times$ larger margin from \emph{half} the dimensions. Reported as a measured failure
+rather than a silent substitution.
+
+\subsection{Slate metrics barely discriminate --- always show the random row \F{F25}}
+
+EB-NeRD slates average 11--12 items with exactly one click, so \textbf{random ranking scores
+nDCG@10 = 0.4367 and AUC = 0.4933}. The best retriever reaches 0.4750 / 0.5407. Every AUC sits
+within noise of 0.5. Any slate-regime table without a random baseline row is misleading, and
+recall@K in the corpus regime is the only metric that clearly separates retrievers here.
+
+\subsection{Conditional pooling earns its complexity on one dataset only}
+
+Pooling strategy counts over 4,000 impressions: EB-NeRD \texttt{mean} 3,991 / \texttt{recent\_half}
+9; MIND \texttt{mean} 2,117 / \texttt{recent\_half} 1,462 / \texttt{max\_pool} 270. \textbf{46\% of
+MIND users have interests too scattered for a centroid, against 0.2\% on EB-NeRD} --- consistent
+with MIND's shorter, more varied histories (median 19 vs 92 clicks).
+
+\subsection{One metric legitimately has no confidence interval}\label{sec:ci}
+
+Q4.4 demands a bootstrap CI on every metric. \textbf{Coverage cannot honestly have one.} It counts
+\emph{distinct} articles, so it grows with sample size; resampling $n$ units with replacement makes
+$\sim$37\% duplicates, so every resample sees fewer unique articles. The first attempt produced
+$0.9783\ [0.9035, 0.9235]$ --- \textbf{the point estimate outside its own interval}. Subsampling
+without replacement fails at every ratio from 0.5 to 0.99. Reported as a point estimate marked
+\texttt{(no CI)}: saying so beats shipping a plausible-looking number that is biased by construction.
+
+\section{Anti-gaming (Q9)}
+
+\textbf{Leakage.} History is truncated to clicks strictly before the impression time.
+\texttt{test\_no\_leakage.py} asserts this on the built store \emph{and injects a deliberate
+post-boundary click to confirm the checker fails} --- a test that passes both before and after the
+boundary breaks proves nothing. \emph{Honest limit:} verifiable only where per-click timestamps
+exist, i.e.\ EB-NeRD. MIND's history is untimestamped, so there the boundary rests on the authors'
+construction; the store records \texttt{history\_boundary\_verifiable: false} rather than implying
+otherwise.
+
+\textbf{Serving-unavailable features.} EB-NeRD's training rows carry \texttt{read\_time},
+\texttt{scroll\_percentage} and \texttt{next\_read\_time}/\texttt{next\_scroll\_percentage} --- all
+recorded \emph{after} the click. Predicting a click from its own consequences is circular. The
+organisers settled the boundary: those four columns are exactly what is deleted from the test set.
+They are excluded in \texttt{clean.py} with a comment naming why. Our retrievers never touch them,
+so the honest with/without pair is the cold-start fallback flag, reported as a \texttt{features}
+column on every result row.
+
+\section{Where it breaks at 10$\times$}
+
+\begin{itemize}
+\item \textbf{The join breaks before the model does \F{F15}.} EB-NeRD large is 52$\times$ small's
+impressions and its history parquet exceeds its behaviours file. The data layer gives first.
+\item \textbf{The prediction path needed a different algorithm, not a bigger machine \F{F32}.}
+Full-corpus retrieval per impression ran at 162 impressions/s ($\sim$4\,h/file) because it discarded
+99\% of each result. Scoring the slate directly: \textbf{2,570/s, 16$\times$}.
+\item \textbf{Parallelism was memory-bound, and the fix was representation \F{F36}.} A worker peaked
+at 15.1\,GB, of which the index was only 1.8\,GB --- the rest was 116.8M click ids as Python
+\texttt{str}. Storing them as \texttt{array('i')} indices: \textbf{9.25\,GB, and 45\% faster}.
+\item \textbf{Swap does not slow the merge, it stops it \F{F38}.} All 51 shards wrote at 6,426
+lines/s, then the merge produced \emph{zero} output for 20+ minutes with 24\,GB swapped. The same
+merge with RAM free: \textbf{7 seconds}. Scoring streams and degrades gracefully; the merge hits a
+13.3M-element set at random, where swap does not degrade --- it stalls.
+\item \textbf{ANN is not yet needed.} Both corpora ($<$65K) are under the 200K threshold where
+brute force stops being affordable at 190--890\,ms/query. At 10$\times$, HNSW becomes necessary and
+its recall-vs-exact gap becomes the thing to report.
+\end{itemize}
+
+\section{Leaderboards (Q5) and limitations}
+
+MIND submitted: \textbf{AUC 0.5568, MRR 0.2646, nDCG@5 0.2778, nDCG@10 0.3331}. EB-NeRD file
+generated and validated (13,336,711 lines, 100\% valid permutations). \emph{Screenshots overleaf.}
+
+\textbf{Limitations, stated plainly.} (i)~The offline harness was under-powered: at $n{=}800$ it
+reported MIND AUC 0.4981 [0.4776, 0.5190] while the leaderboard scored \textbf{0.5568} ---
+\emph{outside} the interval \F{F34}. Now $n{=}4{,}000$+, but several reported differences still have
+overlapping CIs and are labelled as such. (ii)~Abstracts are 75\% of the lexical index and buy
+\textbf{+0.011 recall against a $\pm$0.030 CI} --- kept because Q2.1 mandates it, reported as the
+null result it is \F{F28}. (iii)~HNSW figures come from \emph{random} vectors (near-orthogonal,
+worst case) and are a pessimistic bound. (iv)~MIND's test window is a single day, so one day's
+topical anomaly moves every MIND number.
+
+\end{document}

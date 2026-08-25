@@ -22,6 +22,19 @@ status: done
 > `src/eval/run_all.py` now defaults to **20,000 impressions**, and no retriever decision should
 > be made on less.
 >
+> **Final parameters, as run** (chosen on val before test was touched):
+>
+> | | EB-NeRD | MIND |
+> |---|---|---|
+> | BM25 | `k1=1.6, b=1.0, last_n=15` | `k1=1.6, b=0.75, last_n=5` |
+> | Encoder | MiniLM 384-d | MiniLM 384-d |
+> | Pooling | log decay, `n=20`, `tau=0.35` | same |
+> | Index | brute force (exact) | brute force (exact) |
+> | Recency window | 24 h | **unavailable** (no publish time, F20) |
+> | Cold-start threshold | history ≤ 97 (q0.25) | derived per dataset |
+> | Bootstrap | B=1000, seeded, impression-level | same |
+> | Evaluated | n = 4,000 | n = 4,000 |
+>
 > **Also measured:** random ranking scores nDCG@10 = 0.42 on EB-NeRD, because slates are ~11
 > items with one click. **Any slate table without a random row misleads.**
 

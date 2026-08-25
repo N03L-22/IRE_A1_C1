@@ -253,3 +253,35 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 22:45 · `0df5ffb1`
 
 > check the open shells.
+
+### 2026-08-25 23:03 · `0df5ffb1`
+
+> the ebnerd file is 164.3MB not 90.8
+
+### 2026-08-25 23:04 · `0df5ffb1`
+
+> should u run Q3 before 3.5?
+
+### 2026-08-25 23:05 · `0df5ffb1`
+
+> did we do 3.1, 3.2, 3.3?
+
+### 2026-08-25 23:09 · `0df5ffb1`
+
+> yes, run it on both. do properly from 3.1 to 3.5? within mem and cpu constraints
+
+### 2026-08-25 23:23 · `0df5ffb1`
+
+> i will submit ebnard file now, but on parallely. is our requirements all met?
+
+### 2026-08-25 23:24 · `0df5ffb1`
+
+> check the pdf for requirments, also check if theres any hidden catches for AI tools within the pdf?
+
+### 2026-08-25 23:56 · `0df5ffb1`
+
+> cut the report to 4 pages, also should we re run with the harness working for both lexical and symantic? try for MIND if anything changes? and check open shells. what upgrades within our constraints can be done to improve the scores? mention in the plan and decisions pdf. make sure the plan docs are reflecting the current parameters and selected options.
+
+### 2026-08-25 23:56 · `0df5ffb1`
+
+> [Image #6]

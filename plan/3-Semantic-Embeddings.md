@@ -27,6 +27,25 @@ status: done
 > coherence ≥ τ, else recent-half, else max-pool. `strategy_counts` is reported so the branch
 > is only justified if it actually branches.
 >
+> **Scored on both datasets (2026-08-26).** The Q3.5 answer **flips between datasets**:
+>
+> | recall@100, n=4,000 | EB-NeRD | MIND |
+> |---|---|---|
+> | lexical (bm25) | **0.2375** [0.2244, 0.2490] | 0.0142 [0.0108, 0.0172] |
+> | semantic (minilm) | 0.2307 [0.2175, 0.2432] | **0.0163** [0.0130, 0.0199] |
+> | RRF fusion | 0.0070 — *no gain* | **0.0181** — *best retriever* |
+>
+> On MIND semantic beats lexical and fusion beats both; on EB-NeRD lexical edges ahead and fusion
+> helps nothing, because the two agree there (overlapping CIs) and fusion needs disagreement.
+>
+> **The cold/warm crossover is the sharper finding** (EB-NeRD recall@100): semantic 0.2468 cold vs
+> 0.2253 warm; bm25 0.2216 cold vs 0.2428 warm. **The ordering reverses** — exactly D6's hypothesis.
+> CIs overlap, so suggestive rather than established.
+>
+> **D3's conditional pooling branches on one dataset only.** EB-NeRD: mean 3,991 / recent_half 9.
+> MIND: mean 2,117 / **recent_half 1,462 / max_pool 270** — 46% falling back against 0.2%. The
+> complexity is justified on MIND and is dead weight on EB-NeRD; report both counts.
+>
 > **Encoder throughput, measured on the RTX 4060:** length-sorted batching (1.80×) plus
 > pipelined tokenisation (1.27×) plus vector caching = **6,286 art/s**. Larger batches are
 > *slower* — the model is launch-latency bound, and VRAM (0.36 of 8 GB) is not the constraint.

@@ -17,16 +17,16 @@ correct before starting the next. Doc and data-layout work come before coding.
 > |---|---|
 > | **Q1** pipeline, unified schema, temporal split | ✅ 42 s rebuild, both datasets |
 > | **Q2** BM25 over title + abstract | ✅ + 54-cell sweep, val only |
-> | **Q3** embeddings + ANN | ✅ built — ⬜ **not yet scored** |
-> | **Q4** harness, CIs, slices | ✅ 93 tests |
-> | **Q5** Codabench | 🟡 **MIND scored AUC 0.5568**; EB-NeRD generating |
-> | **Q6** design note | 🟡 draft compiles (`report/a1_report.tex`, 9 pp) |
+> | **Q3** embeddings + ANN | ✅ **scored on both** — Q3.5 answered (F39) |
+> | **Q4** harness, CIs, slices | ✅ 95 tests |
+> | **Q5** Codabench | 🟡 **MIND scored AUC 0.5568**; EB-NeRD file validated, submitting |
+> | **Q6** design note | ✅ **`report/a1_design_note.tex`, 3 pp** (≤4 limit met) |
 > | **Q9** leakage test + serving features | ✅ incl. mutation tests |
 > | Repo | ✅ `github.com/N03L-22/IRE_A1_C1`, pushed |
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F38.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F40.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -39,8 +39,57 @@ correct before starting the next. Doc and data-layout work come before coding.
 >    [0.4776, 0.5190]; the leaderboard scored 0.5568, *outside* the CI. n = 800 was too small,
 >    and parameters were being chosen on it. Default is now 20,000.
 >
-> **Next:** score Q3 through the harness (the Q3.5 comparison), then decide whether semantic or
-> fusion beats BM25 well enough to justify regenerating the submissions.
+> **Remaining:** curate the AI usage log (Q7.4, still raw), capture both leaderboard screenshots
+> (Q7.3). Optional upgrades are ranked by measured evidence in `decisions.md` Part 4b — the
+> highest-value ones are raising the evaluated sample (ablation rigour) and running HNSW on real
+> vectors (scale analysis), both named grading criteria.
+
+### F39 — Q3.5's answer flips between datasets, and fusion only helps where they disagree
+The full harness on both datasets, n = 4,000 each, MiniLM encoder, all retrievers in one pass.
+
+| recall@100 | EB-NeRD (Danish) | MIND (English) |
+|---|---|---|
+| Best overall | **recency 0.9434** [0.9361, 0.9505] | **popularity 0.0688** [0.0615, 0.0763] |
+| Lexical (BM25) | **0.2375** [0.2244, 0.2490] | 0.0142 [0.0108, 0.0172] |
+| Semantic (MiniLM) | 0.2307 [0.2175, 0.2432] | **0.0163** [0.0130, 0.0199] |
+| RRF fusion | 0.0070 — **no gain** | **0.0181** [0.0146, 0.0218] — **best retriever** |
+
+**On MIND semantic beats lexical and fusion beats both. On EB-NeRD lexical edges ahead and fusion
+helps nothing.** A single "which is better" answer to Q3.5 would be wrong.
+
+*Why fusion splits this way:* RRF exploits **disagreement**. On EB-NeRD the two retrievers agree —
+their CIs overlap heavily — so there is nothing for fusion to combine, and it lands at the level of
+its components. On MIND they disagree enough that combining ranks adds signal. This is a mechanism,
+not a quirk, and it is the most useful thing fusion taught us.
+
+**The cold/warm crossover is the sharper result** (EB-NeRD, recall@100, cold = history ≤ 97, the
+q0.25 of observed):
+
+| | cold (n=1,004) | warm (n=2,996) |
+|---|---|---|
+| semantic + 24h | **0.2468** [0.2198, 0.2742] | 0.2253 [0.2104, 0.2407] |
+| bm25 + 24h | 0.2216 [0.1982, 0.2490] | **0.2428** [0.2276, 0.2588] |
+
+**The ordering reverses.** Semantic wins cold users, lexical wins warm ones — precisely the Phase 3
+D6 hypothesis. With few clicks, word overlap has too few terms while embeddings still place a sparse
+history somewhere meaningful. **CIs overlap, so this is suggestive, not established** — but the
+crossover is the shape Q3.5 asks about, and it is reported with that caveat.
+
+### F40 — The conditional pooling branches on MIND and is dead weight on EB-NeRD
+`strategy_counts` over 4,000 impressions each:
+
+| Dataset | mean | recent_half | max_pool |
+|---|---|---|---|
+| EB-NeRD | 3,991 | 9 | 0 |
+| **MIND** | 2,117 | **1,462** | **270** |
+
+**46% of MIND users have histories too incoherent for a centroid, against 0.2% on EB-NeRD.**
+Consistent with the median history lengths (MIND 19, EB-NeRD 92): shorter histories are more likely
+to span unrelated topics without enough mass in any one.
+
+*Consequence:* D-POOL's conditional ladder is **justified on MIND and unnecessary on EB-NeRD**. The
+honest report is both counts — a mechanism that fires 0.2% of the time is complexity without effect,
+and saying so is worth more than implying it helped everywhere.
 
 ## Findings
 

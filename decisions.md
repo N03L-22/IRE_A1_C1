@@ -471,6 +471,57 @@ design note can quote them.
 
 ---
 
+# Part 4b · Upgrades available within our constraints
+
+Written 2026-08-26, after Q3 was measured on both datasets. Ordered by
+**measured evidence per hour of work**, not by appeal. The constraint set is fixed: 28 cores /
+28 GB, one RTX 4060 (8 GB), and the 2026-08-27 deadline.
+
+> [!important] The honest framing
+> The brief says *"grading is never on leaderboard rank"* and lists the criteria as pipeline
+> correctness, system design, ablation rigour, scale analysis and design-note clarity. **Every
+> upgrade below is worth less than the deliverables that are still incomplete.** They are listed
+> because they were asked for, with their true expected value attached.
+
+## Tier 1 — measured gain, low cost
+
+| # | Upgrade | Evidence | Cost | Expected gain |
+|---|---|---|---|---|
+| U1 | **Submit RRF fusion for MIND instead of BM25** | Best MIND retriever on *both* leaderboard metrics: AUC 0.5095 vs BM25's 0.5057, nDCG@10 0.2914 vs 0.2853 | ~20 min (regenerate + upload) | **+0.004 AUC.** Real but small — inside the CI |
+| U2 | **Add a recency prior to the EB-NeRD submission** | Recency alone gets recall@50 = 0.8986 vs BM25+24h's 0.2375 — a 3.8× gap on the strongest signal in the dataset | ~30 min | Unknown on the slate metric; recency's *nDCG@10 is the worst of any retriever* (0.4323), so this may not transfer |
+| U3 | **Raise the evaluated sample to 20K+** | F34: at n=800 the harness said AUC 0.4981 [0.4776, 0.5190] where the leaderboard scored 0.5568 — the CI *excluded* the truth | ~15 min compute | No score change; **narrows the CIs so the comparisons stop overlapping**. This is ablation rigour, which *is* graded |
+
+## Tier 2 — cheap, and they close stated gaps
+
+| # | Upgrade | Why | Cost |
+|---|---|---|---|
+| U4 | **TF-IDF baseline** | Named in the brief's lexical axis and still unbuilt. Isolates what BM25's two knobs actually buy | ~1 h |
+| U5 | **HNSW on real vectors** | F31's ANN numbers used *random* vectors (near-orthogonal, worst case). Replaces a caveated figure with a real one and gives Q6 a proper 10× answer | ~10 min |
+| U6 | **Sweep τ and the recency window jointly** | Open O1/O2. F22 showed window and K interact, so reporting one cell of a 2-D surface understates the finding | ~30 min |
+| U7 | **Provided EB-NeRD embeddings as a baseline row** | F13: a plain join, zero coverage gap. They are *click-trained*, so they **should** beat generic MiniLM — and if ours wins, that signals a bug | ~30 min |
+
+## Tier 3 — would move the leaderboard, and are out of scope
+
+The 0.64–0.70 AUC cluster (17 classmates) and the 0.85+ research entries are **not reachable by
+tuning this component**. F23 measured the entire BM25 parameter sweep as worth ~0.01 AUC; the gap to
+that cluster is ~0.09.
+
+| Upgrade | Why it would work | Why not now |
+|---|---|---|
+| A learned re-ranker (LightGBM over engineered features) | This is what the 0.65 cluster almost certainly is | **Explicitly Component-2.** Building it now spends the time this component is graded on |
+| Fine-tuning the encoder on click data | EB-NeRD's provided contrastive vectors are click-trained and strong | Out of scope per Q3 ("compute or load"), and days of compute |
+| Full-scale training on the large tiers | More data | Large tiers are unlabelled for test; no offline signal to train against |
+
+## What I would actually do with the remaining time
+
+1. **Finish the deliverables** — the AI usage log (Q7.4) is uncurated and the leaderboard
+   screenshots (Q7.3) are pending. Both are stated requirements worth more than any score above.
+2. **U3 then U5** — they cost ~25 minutes together and directly serve *ablation rigour* and *scale
+   analysis*, two of the five named grading criteria.
+3. **U1 if time remains** — a genuine but small improvement, and honest to report as such.
+
+---
+
 # Part 5 · The earlier decision record (merged from architecture.md Part D)
 
 Moved here on 2026-08-25 when `architecture.md` was reduced to describing the system. This is the

@@ -650,7 +650,7 @@ Submission 901876, MIND fusion at 256-d. Screenshot in `report/figs/leaderboard_
 > submissions to establish.
 
 ### F59 — The GPU rewrite was projected at ~1,200× and delivered ~4%, because the projection timed the wrong thing
-Branch `polars-gpu` (`src/retrieval/batched.py`, `tests/test_batched.py` — **on that branch only; deliberately not on `main`**). **A negative result, recorded in full because the
+Branch `polars-gpu`, `src/retrieval/batched.py`. **A negative result, recorded in full because the
 error is more instructive than the code.**
 
 `decisions.md` Part 4c costed a Polars + GPU rewrite at **~1,200× on the semantic half** and
@@ -664,6 +664,31 @@ error is more instructive than the code.**
 | — of which GPU `score_many` | 0.021 | 5× on this stage alone |
 
 **Amdahl ceiling: 2.4×, even if the GPU stage were entirely free.**
+
+**EB-NeRD is worse, and the reason inverts the usual intuition.** Same method, 4,000 real EB-NeRD
+slates:
+
+| | MIND | EB-NeRD |
+|---|---|---|
+| Mean slate width | wider | **11.1 candidates** |
+| Unbatched | 0.105 ms/slate | 0.037 ms/slate |
+| Batched, end-to-end | 0.064 ms | 0.031 ms |
+| **Speedup** | **1.6×** | **1.2×** |
+| Query-vector build, share of batched path | 67% | **79%** |
+| Amdahl ceiling | 2.4× | **1.5×** |
+
+Scaled to the full 13.34M-slate submission: semantic scoring **8 min → 7 min**, inside an 89-minute
+run. **~1%.**
+
+> [!important] Corpus size is not the lever; slate width is
+> The natural expectation was that EB-NeRD — the bigger dataset, 89-minute runs — would benefit
+> more. It benefits *less*, because **slate scoring never touches the corpus.** It gathers only the
+> ~11 candidate rows, so index size is irrelevant to this path; what sets the ratio is how much
+> scoring work each query vector amortises over. EB-NeRD's narrow 11-item slates amortise *less*,
+> so the fixed CPU cost of building the query vector dominates harder.
+>
+> Stated as the general rule: **batching pays in proportion to work-per-query, not data-per-index.**
+> A 6× GPU stage is worth nothing when it is 21% of the path.
 
 Worse when scaled to a real run. MIND fusion took **2,288 s**; semantic slate scoring at 105 µs ×
 2.37M impressions is **249 s — 11% of it.** Batching removes ~93 s: **a ~4% end-to-end gain** for a
@@ -693,9 +718,15 @@ submission actually depends on (cf. bug 6: a submission records a permutation, s
 distinguishable pairs have a defined order).
 
 **Not merged.** 4% does not justify a CUDA dependency on the path that produces deliverables, and
-`main` must run without a GPU. Branch kept: C-2 scores the full corpus rather than an 11-item slate,
-so the ratio that makes this worthless here may reverse — **to be settled by profiling C-2, not by
-reusing this projection.** → `mistakes.md` bug 9.
+`main` must run without a GPU.
+
+**What would actually make batching pay, per the rule above:** more scoring work per query vector,
+which means either much wider candidate sets (full-corpus scoring at 20K–125K rows rather than 11)
+or a query vector that is *reused* across many slates. C-2 plausibly has the first. But the honest
+position after F59 is that **this must be profiled in C-2 rather than projected** — projecting is
+precisely the error this finding records, and the intuition that "the bigger dataset benefits more"
+was already wrong once here. The branch is kept as a starting point, not as a conclusion.
+→ `mistakes.md` bug 9.
 
 ## Findings
 

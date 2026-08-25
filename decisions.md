@@ -659,11 +659,17 @@ the property a submission actually depends on — a submission file records a pe
 distinguishable pairs have a defined order. This is the same reasoning as bug 6 in `mistakes.md`:
 verify the property you depend on, not the one easiest to state.
 
+**EB-NeRD is worse than MIND, which inverts the expectation.** 1.2× end-to-end, a 1.5× ceiling, and
+query-building at 79% of the path — because slate scoring never touches the corpus, so the bigger
+dataset's advantage is imaginary. What sets the ratio is **work per query vector**, and EB-NeRD's
+11.1-candidate slates amortise less than MIND's. Scaled to the real 13.34M-slate run: 8 min → 7 min,
+inside 89 minutes. **~1%.**
+
 **Not merged to `main`.** A 4% gain does not justify adding a CUDA dependency to the submission
-path, and `main` must stay runnable on a machine without a GPU. The branch is kept, not deleted:
-the C-2 pipeline scores *every* article rather than an 11-item slate, so the ratio that makes this
-worthless here is exactly the ratio that may make it worthwhile there — but that will be decided by
-profiling C-2, not by reusing this projection.
+path, and `main` must stay runnable on a machine without a GPU. The branch is kept as a starting
+point: C-2 may score far wider candidate sets, which is the thing that would actually make batching
+pay. But **that gets profiled, not projected** — projecting is the error this whole section records,
+and the "bigger dataset benefits more" intuition was already wrong once.
 
 ---
 

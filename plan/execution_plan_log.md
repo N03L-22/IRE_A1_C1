@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F37.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F38.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -834,6 +834,51 @@ working semantic retriever if it passes the same probe.
 > chose SBERT; the user chose XLM-R because the brief names it. **Both were right to hold their
 > position, and the probe settles it with a number.** Report both rows: it is the clearest available
 > demonstration of *why* an encoder's training objective matters more than its size or dimension.
+
+### F38 — Swap does not slow the merge down, it stops it: 20+ minutes vs 7 seconds
+The EB-NeRD parallel run wrote **all 51 shards correctly** at 6,426 lines/s, then produced *zero*
+output for over 20 minutes. It looked like a hang. It was swap.
+
+Measured at the point of the stall:
+
+| | |
+|---|---|
+| Worker 1 | 13.6 GB RSS, **11.7 GB in swap** |
+| Worker 2 | 10.9 GB RSS |
+| Parent (merging) | 2.6 GB RSS, **12.5 GB in swap** |
+| Free RAM | 6.1 GB of 31.1 |
+| Merge output after 20 min | **0 bytes** |
+
+After killing the processes and re-running the identical merge on the same shards with RAM
+available: **7 seconds**, 13,395,569 rows read → **13,336,711 kept**, 58,858 duplicates dropped.
+
+> [!important] The asymmetry that matters
+> **Scoring streams and degrades gracefully under swap; the merge does not.** Scoring reads one row
+> group at a time — sequential access, so paging costs a constant factor. The merge hits a
+> `set` of 13.3M impression ids at random, and random access against swap is ~5 orders of magnitude
+> slower than RAM. The same operation went from *never finishing* to 7 seconds purely on memory
+> availability.
+>
+> This is why the fix is not "use less memory" but "**do not hold worker memory during the merge**".
+
+**Three root causes, all fixed in `src/submit/codabench.py`:**
+
+1. **The worker pool was still alive during the merge.** Concatenation ran inside
+   `with ProcessPoolExecutor(...)`, so two workers holding 24.5 GB stayed resident for a phase that
+   does not need them. The pool is now shut down with an explicit `finally: pool.shutdown(wait=True)`
+   before the merge starts, and the freed memory is logged.
+2. **`set[str]` over 13.3M ids costs ~1.5 GB** in Python string objects. Impression ids are integers,
+   so `set[int]` is used, with a string fallback for non-numeric ids on other datasets.
+3. **Nothing warned.** `_warn_if_swapping()` now fires during scoring, and a preflight clamps
+   `--n-jobs` to what actually fits (`WORKER_GB = 9.5`, `MERGE_HEADROOM_GB = 3.0`).
+
+**`--allow-swap` exists but does not cover the merge.** The user's position — swap is acceptable if
+it buys speed — is right for scoring and wrong for the merge, and the 20-minutes-vs-7-seconds
+measurement is why. The flag relaxes the worker clamp; the merge still runs only after every worker
+has exited.
+
+*Also worth noting:* the shards were never at risk. All 51 were complete and valid on disk, so the
+run was recovered by merging them directly rather than re-scoring 13.3M impressions.
 
 ### 2026-08-18 — Phase 1 steps 3–5 built and run
 - `src/data/clean.py` (unify + drive), `src/data/split.py` (temporal split, truncation, leakage

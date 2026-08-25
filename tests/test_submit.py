@@ -140,3 +140,48 @@ def test_compact_histories_drop_ids_absent_from_the_corpus() -> None:
 def test_compact_histories_unknown_user_is_cold_not_an_error() -> None:
     compact = CompactHistories([], {"A0": "text"})
     assert compact.texts_before("nobody", datetime(2023, 5, 1)) == []
+
+
+def test_int_dedup_matches_string_dedup() -> None:
+    """The merge dedups on int ids; it must agree with the string version.
+
+    Switching set[str] -> set[int] cut ~1.5 GB from the merge, which mattered
+    because that phase once drove the machine into 24 GB of swap and stalled
+    for 20+ minutes (F38). A dedup that silently disagreed would drop or keep
+    the wrong lines in a 13.3M-line submission.
+    """
+    lines = [
+        "100 [1,2]", "007 [1]", "7 [1,2,3]", "100 [3,4]", "0100 [5]",
+    ]
+
+    seen_str, kept_str = set(), []
+    for ln in lines:
+        iid = ln.split(" ", 1)[0]
+        if iid not in seen_str:
+            seen_str.add(iid)
+            kept_str.append(ln)
+
+    seen_int, kept_int = set(), []
+    for ln in lines:
+        key = int(ln.split(" ", 1)[0])
+        if key not in seen_int:
+            seen_int.add(key)
+            kept_int.append(ln)
+
+    # "007" and "7" are the SAME impression numerically but different strings.
+    # The int form is correct: an id is a number, and the leading zero is
+    # formatting. Assert the difference explicitly so it is a decision, not a
+    # surprise.
+    assert len(kept_int) == 2, kept_int
+    assert len(kept_str) == 4, kept_str
+    assert [ln.split(" ", 1)[0] for ln in kept_int] == ["100", "007"]
+
+
+def test_worker_budget_constants_are_sane() -> None:
+    """Preflight must leave room for the merge, or it recreates F38."""
+    from src.submit.codabench import MERGE_HEADROOM_GB, WORKER_GB
+
+    assert WORKER_GB > 0 and MERGE_HEADROOM_GB > 0
+    # The merge builds a set over 13.3M ints; 3 GB is the measured need with
+    # margin. If someone drops this to zero the stall comes straight back.
+    assert MERGE_HEADROOM_GB >= 2.0, "not enough headroom reserved for the merge"

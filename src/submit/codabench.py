@@ -20,6 +20,7 @@ work being the file write.
 from __future__ import annotations
 
 import argparse
+import gc
 import json
 import logging
 import time
@@ -28,6 +29,7 @@ from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+import psutil
 import pyarrow.parquet as pq
 
 from ..data.readers import SPLIT_NAMES, get_reader
@@ -41,6 +43,15 @@ log = logging.getLogger("submit")
 #: MIND's evaluate.py opens this exact path and raises FileNotFoundError
 #: otherwise.
 SUBMISSION_MEMBER = "prediction.txt"
+
+#: Measured peak RSS of one worker on EB-NeRD's test split: index + articles
+#: (1.8 GB) plus CompactHistories over 807,677 users (~7.4 GB). Was 15.1 GB
+#: before the int-array change. Used to clamp --n-jobs before a run starts.
+WORKER_GB = 9.5
+
+#: Left free for the single-threaded merge, which builds a set over 13.3M
+#: impression ids after the workers exit.
+MERGE_HEADROOM_GB = 3.0
 
 #: Params chosen on val in the Phase 2 sweep (F23), before test was touched.
 BEST = {
@@ -143,6 +154,25 @@ def build_predictions(
 # The index is rebuilt per worker rather than pickled across: bm25s indices
 # are large and pickling one per task would cost more than the ~6 s rebuild.
 # ---------------------------------------------------------------------------
+
+def _warn_if_swapping(threshold_gb: float = 2.0) -> None:
+    """Say something before the machine starts thrashing, not after.
+
+    A run that swaps does not fail -- it slows by two orders of magnitude and
+    looks like a hang, which is exactly how the first EB-NeRD attempt
+    presented. A log line at the moment memory runs out turns a mystery into
+    a diagnosis.
+    """
+    vm = psutil.virtual_memory()
+    avail = vm.available / (1024 ** 3)
+    if avail < threshold_gb:
+        swap = psutil.swap_memory()
+        log.warning(
+            "LOW MEMORY: %.1f GB available, %.1f GB swap in use -- "
+            "reduce --n-jobs; each worker holds the index plus all histories",
+            avail, swap.used / (1024 ** 3),
+        )
+
 
 _WORKER: dict = {}
 
@@ -280,13 +310,51 @@ def build_predictions_parallel(
     test_split: str,
     out_path: Path,
     n_jobs: int,
+    allow_swap: bool = False,
 ) -> dict:
-    """Row-group-parallel prediction. Falls back to serial if unsupported."""
+    """Row-group-parallel prediction. Falls back to serial if unsupported.
+
+    > [!warning] Swap is fine for scoring and fatal for the merge
+    > The scoring phase streams a row group at a time, so paging degrades
+    > gracefully. The **merge does not**: it builds a set over 13.3M impression
+    > ids and hits it randomly, and random access against swap is roughly five
+    > orders of magnitude slower than RAM. A first run wrote all 51 shards at
+    > 6,426 lines/s, then produced *zero* output for 20+ minutes once the merge
+    > started paging.
+    >
+    > So ``--allow-swap`` relaxes the worker clamp, but the merge still runs
+    > only after every worker has exited and its memory is returned.
+    """
     import tempfile
 
     behaviours = get_reader(dataset, work_dir, tier)._split_dir(test_split) / "behaviors.parquet"
     n_groups = pq.ParquetFile(behaviours).metadata.num_row_groups
-    log.info("parallel: %d row groups across %d workers", n_groups, n_jobs)
+
+    # Preflight. Each worker holds its own index plus all histories -- measured
+    # at ~9.2 GB on EB-NeRD's test split after the CompactHistories change
+    # (15.1 GB before it). Starting more workers than fit does not fail
+    # loudly; it swaps, and a swapping run looks exactly like a hang. Clamp
+    # here rather than discovering it 40 minutes in.
+    available_gb = psutil.virtual_memory().available / (1024 ** 3)
+    fits = max(1, int((available_gb - MERGE_HEADROOM_GB) // WORKER_GB))
+    if fits < n_jobs:
+        if allow_swap:
+            log.warning(
+                "%.1f GB available: %d workers x %.1f GB will use swap. "
+                "Proceeding because --allow-swap was passed.",
+                available_gb, n_jobs, WORKER_GB,
+            )
+        else:
+            log.warning(
+                "%.1f GB available: %d workers x %.1f GB would swap. Using %d. "
+                "Pass --allow-swap to override.",
+                available_gb, n_jobs, WORKER_GB, fits,
+            )
+            n_jobs = fits
+    log.info(
+        "parallel: %d row groups across %d workers (%.1f GB free, ~%.1f GB/worker)",
+        n_groups, n_jobs, available_gb, WORKER_GB,
+    )
 
     started = time.perf_counter()
     tmpdir = Path(tempfile.mkdtemp(prefix="preds_", dir=out_path.parent))
@@ -295,11 +363,18 @@ def build_predictions_parallel(
     written = cold = 0
     shards: dict[int, str] = {}
     done = 0
-    with ProcessPoolExecutor(
+
+    # The pool is created and shut down inside this block so that every worker
+    # has exited before concatenation begins. Leaving concatenation inside the
+    # `with` kept two workers resident holding 13.6 GB and 10.9 GB while the
+    # single-threaded merge tried to allocate a 13.3M-element set -- which put
+    # 24 GB into swap and hung a run whose shards were already complete.
+    pool = ProcessPoolExecutor(
         max_workers=min(n_jobs, n_groups),
         initializer=_init_worker,
         initargs=(dataset, tier, str(work_dir), test_split),
-    ) as pool:
+    )
+    try:
         for rg_idx, shard, n, c in pool.map(_predict_row_group, tasks):
             shards[rg_idx] = shard
             written += n
@@ -311,12 +386,34 @@ def build_predictions_parallel(
                     "  %d/%d groups, %s lines (%.0f/s)",
                     done, n_groups, f"{written:,}", rate,
                 )
+                _warn_if_swapping()
+    finally:
+        pool.shutdown(wait=True)
+        gc.collect()
+        log.info("  workers shut down; %.1f GB available for the merge",
+                 psutil.virtual_memory().available / (1024 ** 3))
 
     # Concatenate in row-group order, deduplicating on impression id. EB-NeRD
-    # repeats ~200K ids across the file (F: 13,536,710 rows -> 13,336,711
+    # repeats ~200K ids across the file (13,536,710 rows -> 13,336,711
     # unique), and the format is one line per id, so a straight concatenation
     # would emit duplicates.
-    seen: set[str] = set()
+    #
+    # > [!warning] This step once drove the machine into 24 GB of swap
+    # > The first EB-NeRD run wrote all 51 shards correctly and then hung. Two
+    # > causes, both fixed here:
+    # >
+    # > 1. **The worker pool was still alive.** Concatenation ran inside the
+    # >    `with ProcessPoolExecutor(...)` block, so two workers holding 13.6 GB
+    # >    and 10.9 GB were kept resident for a phase that does not need them.
+    # >    The pool is now shut down *before* this point.
+    # > 2. **`set[str]` of 13.3M ids costs ~1.5 GB** in Python string objects.
+    # >    Impression ids are integers, so `set[int]` is used instead -- roughly
+    # >    a third of the memory and faster to hash.
+    #
+    # A non-integer id falls back to hashing the string, so this stays correct
+    # for any dataset whose ids are not numeric.
+    seen_int: set[int] = set()
+    seen_str: set[str] = set()
     kept = 0
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, "w") as out:
@@ -324,9 +421,16 @@ def build_predictions_parallel(
             with open(shards[i]) as sh:
                 for line in sh:
                     iid = line.split(" ", 1)[0]
-                    if iid in seen:
-                        continue
-                    seen.add(iid)
+                    try:
+                        key = int(iid)
+                    except ValueError:
+                        if iid in seen_str:
+                            continue
+                        seen_str.add(iid)
+                    else:
+                        if key in seen_int:
+                            continue
+                        seen_int.add(key)
                     out.write(line)
                     kept += 1
             Path(shards[i]).unlink()
@@ -352,6 +456,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--work-dir", type=Path, default=Path("data/work"))
     p.add_argument("--out-dir", type=Path, default=Path("submissions"))
     p.add_argument("--max-k", type=int, default=500)
+    p.add_argument(
+        "--allow-swap",
+        action="store_true",
+        help="run the requested worker count even if it exceeds free RAM. "
+             "Fine for the scoring phase (sequential); the merge still waits "
+             "for workers to exit first, because random access against swap "
+             "does not degrade -- it stalls.",
+    )
     add_arguments(p)
     args = p.parse_args(argv)
 
@@ -393,7 +505,8 @@ def main(argv: list[str] | None = None) -> int:
         # Parquet-backed readers expose row groups, the natural unit of
         # parallelism. MIND is TSV and has none, so it takes the serial path.
         stats = build_predictions_parallel(
-            args.dataset, args.tier, args.work_dir, test_split, txt, budget.n_jobs
+            args.dataset, args.tier, args.work_dir, test_split, txt, budget.n_jobs,
+            allow_swap=args.allow_swap,
         )
     else:
         stats = build_predictions(

@@ -249,3 +249,7 @@ real verification loop is the point, not a transcript.
 ### 2026-08-25 22:20 · `0df5ffb1`
 
 > make sure the Q3 is parallelized where possible and GPU is accessible
+
+### 2026-08-25 22:45 · `0df5ffb1`
+
+> check the open shells.

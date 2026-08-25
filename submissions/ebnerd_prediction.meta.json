@@ -1,0 +1,17 @@
+{
+  "dataset": "ebnerd",
+  "tier": "testset",
+  "retriever": "bm25(k1=1.6,b=1,n=15)",
+  "params": {
+    "k1": 1.6,
+    "b": 1.0,
+    "last_n": 15
+  },
+  "lines": 13336711,
+  "rows_read": 13395569,
+  "duplicates_dropped": 58858,
+  "row_groups": 51,
+  "workers": 2,
+  "note": "merged from shards after the first run stalled in swap; scoring output unaffected",
+  "generated_at": "2026-08-25T23:00:00"
+}

@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Ten defects, all in `mistakes.md` with full detail. **Nine of ten did not crash** — every one
+Twelve defects, all in `mistakes.md` with full detail. **Eleven of twelve did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history

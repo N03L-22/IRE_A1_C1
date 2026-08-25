@@ -317,6 +317,73 @@ believe it changes**, not the step its name suggests.
 
 ---
 
+## 11. Quoting a microbenchmark as the cost of the feature
+
+**Where:** F62 in the execution log — "116.8M clicks in 0.35 s and 0.47 GB, ~450× faster"
+
+**What it did.** After measuring `explode().to_numpy()` in isolation, I reported those figures as
+what a columnar history loader would cost. Building the loader gave **4.58 s and 1.40 GB — 34.9×**,
+not 450×.
+
+**Why.** The microbenchmark timed one call. The actual feature also builds per-user offsets,
+converts the timestamp column, and maps 807,677 user ids to rows. All necessary; none measured.
+
+**What caught it.** Building it and benchmarking the whole thing against the real loader.
+
+**Why it is bug 9 again.** Bug 9 was projecting 1,200× from GPU kernel time that excluded query
+construction and transfer. This is the same shape — a real number from a real measurement, describing
+a fragment, presented as the whole. It is milder (34.9× is still worth having, where 1,200× → 4% was
+not) but it is the same reasoning error, three findings later.
+
+**The fix.** Both numbers are kept in F64 side by side, so the gap between the microbenchmark and the
+feature stays visible rather than being quietly replaced.
+
+**Transferable lesson:** *a microbenchmark of one call is not the cost of the feature it belongs to.*
+The rule earned in bug 9 — profile the whole before optimising the part — applies just as much when
+the news is good. Optimism needs the same verification as pessimism.
+
+---
+
+## 12. A memory optimisation that quietly moved the leakage boundary
+
+**Where:** `src/data/columnar.py`, storing click times as int32 seconds
+
+**What it did.** Times were the largest array in the columnar loader (0.93 GB against the ids'
+0.47 GB), and measurement showed **0 of 116,825,984 EB-NeRD clicks have sub-second precision** — every
+timestamp is a whole second. So storing seconds instead of microseconds is lossless, and halves the
+biggest array. That reasoning is correct.
+
+**What it missed.** The *clicks* are whole seconds. The **cutoffs are not.**
+`np.datetime64(cutoff, "s")` floors toward the past, so a cutoff of `07:51:01.000001` becomes
+`07:51:01` — and `t < cutoff` then **excludes a click at exactly `07:51:01`**, which is genuinely
+before it. One click per affected user, dropped from the history that feeds the query.
+
+**What caught it.** `test_matches_history_before_on_real_ebnerd_users`, on real user 40107:
+
+```
+truncation diverged for user 40107 at 2023-05-11 07:51:01.000001: 0 vs 1 clicks
+```
+
+The test probes each real click time and **±1 µs either side**, specifically because a boundary is
+easiest to get wrong at its own edge. A fixture test with whole-second cutoffs passes either way.
+
+**The fix.** Ceiling, not floor: since every stored time is a whole second, anything strictly before
+`07:51:01.000001` is at `07:51:01` or earlier, hence strictly before `07:51:02`. One line —
+`cut = -((-us) // 1_000_000)` — and the throughput cost (251K/s → 180K/s) is worth it.
+
+**Why this is the most valuable bug in the file.** It is the case F36's rule was written for. Had I
+*migrated* `History.before()` to the columnar form instead of *duplicating and pinning* it, there
+would have been no original left to disagree with — the leak would have shipped, in the direction
+nothing checks for (too *few* clicks, not too many), affecting only the uploaded file. **The
+duplicate-and-pin pattern paid for itself the first time it was used.**
+
+**Transferable lesson:** *a lossless change to the data is not automatically a lossless change to the
+comparison.* I verified the precision of the stored values and never asked about the precision of
+what they are compared *against*. When you narrow a type, the invariant to check is the operation,
+not the storage.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |
@@ -331,8 +398,10 @@ believe it changes**, not the step its name suggests.
 | 8. Under-powered sample | No | An external number disagreeing |
 | 9. 1,200× speedup projection | No | Profiling end-to-end instead of per-stage |
 | 10. Ruling out Polars by assumption | No | Measuring the step, after being asked about it |
+| 11. Microbenchmark quoted as feature cost | No | Building the feature and benchmarking it whole |
+| 12. int32-seconds moved the leakage boundary | No | Differential test vs `History.before()` on real users |
 
-**Nine of ten did not crash.** The one that did — the filename — was the
+**Eleven of twelve did not crash.** The one that did — the filename — was the
 cheapest to fix and the least interesting.
 
 The working method, stated as a rule: **before running anything, write down

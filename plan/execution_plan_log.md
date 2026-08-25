@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F47.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F51.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -357,6 +357,110 @@ just compress it.
 
 *Caveat:* n=800, one dataset, one window. The 256-vs-384 gap is significant but small, and the
 result should be confirmed at a larger sample before being treated as settled.
+
+### F48 — Multi-query retrieval does not help, and costs 19x the query time
+D3 named multi-query (cluster the history, retrieve per centroid, merge) as *considered, not built*
+on cost grounds. F40's finding that **46% of MIND users fall back** from the mean made it look worth
+revisiting, so it was built and measured. `results/multiquery.json`.
+
+| Dataset | Variant | recall@50 | nDCG@10 | Query time | Paired diff (recall@50) |
+|---|---|---|---|---|---|
+| MIND | single vector | 0.0103 [0.0043, 0.0169] | 0.2767 | **3.0 s** | — |
+| MIND | multi-query, c=3 | 0.0112 [0.0053, 0.0182] | 0.2795 | **57.5 s** | +0.0009 [−0.0055, +0.0077] |
+| EB-NeRD | single vector | 0.0037 [0.0000, 0.0088] | 0.4270 | **1.5 s** | — |
+| EB-NeRD | multi-query, c=3 | 0.0063 [0.0013, 0.0125] | 0.4260 | **53.9 s** | +0.0025 [−0.0037, +0.0100] |
+
+**Not significant on either dataset or either metric, at 19–36× the query cost.**
+
+*The mechanism did fire.* Cluster counts: MIND `{3: 1518, 1: 16, 2: 30}`, EB-NeRD `{3: 1600}` — so
+nearly every user was genuinely split into three interest centroids. This is not a case of the
+clustering silently collapsing back to the mean.
+
+> [!important] The surprising part is *how little* it changes
+> The two variants differ on only **16/800** impressions on MIND and **8/800** on EB-NeRD at
+> recall@50. Even for users with three distinct interest clusters, RRF-merging three rankings lands
+> on almost the same top-50 as the single blended vector.
+>
+> That contradicts D3's stated motivation — *"a user who reads football and recipes gets a centroid
+> between the two, matching neither"*. The blended centroid is evidently not as useless as the
+> theory assumed: it still ranks each interest's articles highly enough to reach the top-50, because
+> **recall@K at K=50 is a forgiving target**. The blur would matter far more for precision at rank 1,
+> which is a re-ranker's problem, not candidate generation's.
+
+*Consequence:* **D3's original judgement was right, and is now evidence rather than a guess.** Keep
+the conditional single vector. Report multi-query as built, measured, and rejected — which is a
+stronger design-note entry than having named it and moved on.
+
+### F49 — HNSW is 60-70x faster at 0.99+ recall: F31's pessimism was a synthetic-data artefact
+Re-benchmarked FAISS HNSW against exact search on **clustered** vectors (50 centroids + noise, the
+structure real embeddings have) rather than the uniform-random vectors F31 used.
+
+| Corpus | n | exact | HNSW ef=128 | Speed-up | recall vs exact | build |
+|---|---|---|---|---|---|---|
+| EB-NeRD small | 20,738 | 98.8 ms | **1.6 ms** | **62.7×** | **0.9997** | 0.2 s |
+| MIND small | 65,238 | 300.7 ms | **4.4 ms** | **69.1×** | 0.9962 | 1.2 s |
+| EB-NeRD large | 125,541 | 580.1 ms | **9.0 ms** | **64.5×** | 0.9875 | 4.0 s |
+
+**This corrects F31, and the correction is large.** F31 measured HNSW losing 11–66% of the exact
+answer and I flagged that it "must be re-run on real vectors" — but kept quoting the pessimistic
+figure as though it were a genuine trade-off. On clustered vectors the recall loss is
+**0.03–1.25%**, not 45%. Uniform-random vectors in 384 dimensions are near-orthogonal, which is the
+one input for which a proximity graph has no structure to exploit; it is the worst case, not a
+neutral one.
+
+**It also corrects the framing of D4 (Phase 3).** "Brute force is affordable at this scale" is true
+*per query* — 98.8 ms is nothing. But the submission run issues **2.37M queries** on MIND and 13.3M
+on EB-NeRD. At 62× that is the difference between hours and minutes, which is exactly the cost F32
+attacked from the other direction.
+
+*Consequence:* **HNSW should be the default for any full-corpus pass, not just the large tier.**
+Brute force keeps one job — it is the *exact* reference the ANN recall is measured against, and
+F43's n=800 run confirmed both return identical recall@200 on real data. Keep it as the ceiling,
+ship HNSW as the workhorse.
+
+> [!warning] The general lesson, stated twice now
+> F31 and F7's random-vector benchmark are the same mistake: **synthetic data made a component look
+> broken.** The latency and memory figures from F31 were fine; only the recall number was
+> meaningless, and it was the one that would have gone in the report. Any benchmark whose input is
+> generated rather than measured needs its distribution justified before its numbers are quoted.
+
+### F50 — At 10x scale HNSW recall drops to 0.83: the concrete "where it breaks" answer
+Extending F49's benchmark to a million vectors, clustered, 384-d:
+
+| n | exact | HNSW ef=128 | Speed-up | recall vs exact | build |
+|---|---|---|---|---|---|
+| 125,541 | 580 ms | 9.0 ms | 64× | 0.9875 | 4.0 s |
+| **1,000,000** | **4,603 ms** | **28.7 ms** | **160×** | **0.8332** | 155.9 s |
+
+**Both sides of the trade-off move at 10×, in opposite directions.** Exact search becomes unusable
+(4.6 s *per query* — 2.37M of them would take 3 days), while HNSW's speed advantage grows to 160×
+but it starts **losing 17% of the true answer** at the ef that was lossless at 125K.
+
+*This is the Q6 answer, measured rather than projected:* the pipeline does not break at 10× because
+of memory or the model — it breaks because **the ANN index's recall/latency trade-off stops being
+free**. The fix is a higher `efSearch` (which costs latency back) or a different index family
+(IVF-PQ, which trades memory). Build time also grows super-linearly, 4 s → 156 s.
+
+### F51 — `last_n` inside the 24h window peaks at 20, and is still not significant
+F23 swept `last_n` over the *full corpus*, a regime where everything scores under 0.008. Re-run
+inside the 24h window — the regime we actually ship. `results/lastn_sweep_ebnerd.json`.
+
+| last_n | recall@50 | nDCG@10 | Paired vs 15 (recall@50) |
+|---|---|---|---|
+| 5 | 0.2288 [0.2013, 0.2575] | 0.4649 | — |
+| 10 | 0.2313 [0.2013, 0.2600] | 0.4644 | — |
+| **15** *(shipped)* | 0.2475 [0.2175, 0.2775] | 0.4657 | baseline |
+| **20** | **0.2531** [0.2225, 0.2825] | **0.4703** | +0.0056 [−0.0156, +0.0250] **not significant** |
+| 30 | 0.2456 [0.2150, 0.2737] | 0.4630 | −0.0019 — not significant |
+| 50 | 0.2338 [0.2037, 0.2637] | 0.4543 | −0.0138 — not significant |
+
+**A clear inverted U peaking at 20**, and *nothing* significant against the shipped 15. The shape
+matches F23's full-corpus result, so the window does not change the conclusion — which is itself
+worth knowing, since F22/F41 showed window and K *do* interact.
+
+*Consequence:* **D4's `last_n` is confirmed as inside the noise in both regimes.** The curve peaks
+near 20 while we ship 15 — a candidate for change, not a demonstrated improvement, and the honest
+report is the curve plus the non-significance rather than a claim that 20 is better.
 
 ## Findings
 

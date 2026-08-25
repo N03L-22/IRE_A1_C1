@@ -207,6 +207,33 @@ makes PCA often improve retrieval rather than merely compress it. Combined with 
 XLM-R's 768-d lost to MiniLM's 384-d by 348$\times$ on the Danish probe: \textbf{the training
 objective and the noise floor decide quality, the width does not}.
 
+\subsection{Query length: an inverted U, and still not significant \F{F51}}
+
+Swept \texttt{last\_n} \emph{inside} the 24\,h window, the regime we ship, rather than over the full
+corpus where everything scores under 0.008. recall@50: 0.2288 (5), 0.2313 (10), 0.2475 (15),
+\textbf{0.2531 (20)}, 0.2456 (30), 0.2338 (50) --- a clear peak at 20. Paired against the shipped 15
+it is $+0.0056$ [$-0.0156$, $+0.0250$], \textbf{not significant}, and neither is any other value.
+The shape matches the full-corpus sweep, so the window does not change this conclusion even though
+window and $K$ do interact elsewhere. We ship 15 and report that 20 is a candidate, not an
+improvement.
+
+\subsection{Multi-query retrieval: built, measured, rejected \F{F48}}
+
+The stated weakness of a single user vector is that someone who reads football \emph{and} recipes
+gets a centroid between the two, matching neither. Clustering the history and retrieving per centroid
+should fix that --- and \F{F40} found \textbf{46\% of MIND users} falling back from the mean, so the
+population exists.
+
+Measured: \textbf{not significant on either dataset, at 19--36$\times$ the query cost} (MIND 57.5\,s
+vs 3.0\,s; paired $+0.0009$ [$-0.0055$, $+0.0077$]). The clustering fired properly --- 1,518 of 1,564
+MIND users received three centroids --- yet the two variants differ on only \textbf{16 of 800}
+impressions.
+
+\textbf{So the blended centroid is not as useless as the theory assumes.} It still ranks each
+interest's articles highly enough to reach a top-50, because \emph{recall@K at K{=}50 is a forgiving
+target}. The blur would matter for precision at rank 1 --- a re-ranker's problem, not candidate
+generation's. Keeping the single vector was the right call, and is now evidence rather than a guess.
+
 \subsection{Overlapping intervals are the wrong test \F{F46}}
 
 ``Do the CIs overlap?'' is a conservative approximation. Both retrievers are scored on the
@@ -257,9 +284,15 @@ at 15.1\,GB, of which the index was only 1.8\,GB --- the rest was 116.8M click i
 lines/s, then the merge produced \emph{zero} output for 20+ minutes with 24\,GB swapped. The same
 merge with RAM free: \textbf{7 seconds}. Scoring streams and degrades gracefully; the merge hits a
 13.3M-element set at random, where swap does not degrade --- it stalls.
-\item \textbf{ANN is not yet needed.} Both corpora ($<$65K) are under the 200K threshold where
-brute force stops being affordable at 190--890\,ms/query. At 10$\times$, HNSW becomes necessary and
-its recall-vs-exact gap becomes the thing to report.
+\item \textbf{ANN: the trade-off only becomes real at 10$\times$ \F{F49/F50}.} On \emph{clustered}
+vectors HNSW is 62--69$\times$ faster than exact at \textbf{0.99+ recall} --- an earlier benchmark
+using uniform-random vectors measured only 0.45--0.77 and was a synthetic-data artefact, since
+random vectors in 384 dimensions are near-orthogonal and give a proximity graph nothing to exploit.
+At 1M vectors the speed-up grows to 160$\times$ but \textbf{recall falls to 0.8332}: exact search
+becomes unusable (4.6\,s/query) exactly as the approximation starts costing 17\% of the answer.
+\textbf{That is where the pipeline breaks} --- not on memory or the model, but on the ANN index's
+recall/latency trade-off ceasing to be free. Build time also grows super-linearly, 4\,s
+$\rightarrow$ 156\,s.
 \end{itemize}
 
 \section{Leaderboards (Q5) and limitations}

@@ -46,10 +46,12 @@ status: done
 > MIND: mean 2,117 / **recent_half 1,462 / max_pool 270** — 46% falling back against 0.2%. The
 > complexity is justified on MIND and is dead weight on EB-NeRD; report both counts.
 >
-> **D3's rejected options are now measured, not just named.** `MultiQueryRetriever` (cluster the
-> history, retrieve per centroid, RRF-merge) is built and under test — motivated by F40, which found
-> **46% of MIND users falling back** from the mean because their history is incoherent. D3 dismissed
-> it on cost; that measurement changes the cost/benefit it assumed.
+> **D3's rejected option is now measured, and D3 was right (F48).** `MultiQueryRetriever` was built
+> and tested — motivated by F40's finding that 46% of MIND users fall back from the mean. Result:
+> **not significant on either dataset, at 19–36× the query cost** (MIND 57.5 s vs 3.0 s). The
+> clustering fired properly (`{3: 1518, ...}`), yet the two variants differ on only **16/800**
+> impressions. The blended centroid is not as useless as the theory assumed — its blur would matter
+> for precision at rank 1, not for recall@50. Keep the conditional single vector.
 >
 > **D4's dimension question has a clear answer (F47), and it is not the expected one.** Truncating
 > the 384-d vectors *inside the 24h window*:

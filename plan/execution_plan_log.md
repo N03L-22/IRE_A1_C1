@@ -9,33 +9,38 @@ title: Execution plan log — A1 Component-1
 Running log of **what we decided, why, what is done and what is not**. One task at a time; review and
 correct before starting the next. Doc and data-layout work come before coding.
 
-> [!abstract] Where things stand (2026-08-18)
-> **Q1 is essentially done.** Both datasets build into one unified, temporally-split store in 42 s,
-> with the leakage boundary verified by a test that is itself proven to fail when the boundary breaks.
+> [!abstract] Where things stand (2026-08-25)
+> **Q1–Q4 built and measured; Q5 half-submitted.** MIND has a real leaderboard score. The
+> semantic retriever exists but has not yet been scored through the harness.
 >
 > | Item | State |
 > |---|---|
-> | Raw data (small tier) | ✅ downloaded, all archives CRC-verified |
-> | Git repo | ✅ `main`, 5 commits, `data/` correctly ignored |
-> | Plan docs | ✅ this set |
-> | **Q1.1** download | ✅ small tier complete |
-> | **Q1.2** unified schema | ✅ `src/data/clean.py`, both datasets |
-> | **Q1.3** temporal split | ✅ `src/data/split.py`, ordering asserted |
-> | **Q1.4** feature store | 🟡 parquet store exists; feature columns beyond retrieval pending |
-> | **Q1.5** one-command rebuild | ✅ `make clean && make data && make store` |
-> | **Q9** leakage test | ✅ 38 tests, incl. mutation tests that prove the checker bites |
-> | Phases 2–4 | ⬜ next |
-> | `ebnerd_testset.zip` | ❌ not downloaded — **blocks Q5 only** |
-> | GitHub Classroom repo | ❌ not accepted yet |
+> | **Q1** pipeline, unified schema, temporal split | ✅ 42 s rebuild, both datasets |
+> | **Q2** BM25 over title + abstract | ✅ + 54-cell sweep, val only |
+> | **Q3** embeddings + ANN | ✅ built — ⬜ **not yet scored** |
+> | **Q4** harness, CIs, slices | ✅ 93 tests |
+> | **Q5** Codabench | 🟡 **MIND scored AUC 0.5568**; EB-NeRD generating |
+> | **Q6** design note | 🟡 draft compiles (`report/a1_report.tex`, 9 pp) |
+> | **Q9** leakage test + serving features | ✅ incl. mutation tests |
+> | Repo | ✅ `github.com/N03L-22/IRE_A1_C1`, pushed |
+> | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> Built store: 272 MB parquet, `data/store/{mind,ebnerd}/` + a manifest per dataset.
+> **Two days to the 2026-08-27 deadline. Findings F1–F37.**
 >
-> Nine days to the 2026-08-27 deadline. Findings are recorded below as F1–F37.
+> **The three findings that reshaped the work:**
+> 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
+>    recall@50 = 0.9050 on EB-NeRD. Candidate generation here is primarily a *freshness*
+>    problem; BM25 on the full corpus is indistinguishable from popularity.
+> 2. **F37 — XLM-RoBERTa cannot separate related from unrelated Danish** (margin +0.0018 vs
+>    MiniLM's +0.6271). The brief names it; the probe proves it unusable. Reported as a
+>    measured failure rather than quietly swapped.
+> 3. **F34 — the offline harness was under-powered.** It reported MIND AUC 0.4981
+>    [0.4776, 0.5190]; the leaderboard scored 0.5568, *outside* the CI. n = 800 was too small,
+>    and parameters were being chosen on it. Default is now 20,000.
 >
-> **Large tiers measured (F13–F15) but still deliberately idle.** The headline numbers stay on small;
-> what the measurement bought is a concrete Q6 scale answer and a cheaper baseline, not a change of
-> scope.
+> **Next:** score Q3 through the harness (the Q3.5 comparison), then decide whether semantic or
+> fusion beats BM25 well enough to justify regenerating the submissions.
 
 ## Findings
 

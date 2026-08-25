@@ -2,10 +2,29 @@
 type: note
 kind: reference
 title: Phase 4 — Evaluation harness (Q4) and the leakage test (Q9)
-status: planned
+status: done
 ---
 
 # Phase 4 — Evaluation harness (Q4)
+
+> [!success] As built (2026-08-25) — `src/eval/`
+> One `evaluate()` over any `Retriever`, so Q4.5 holds by construction. Both regimes kept
+> strictly apart, bootstrap CIs at impression level, slices with per-dataset thresholds.
+>
+> **D5 has one documented exception (F24).** Coverage counts *distinct* articles, so it grows
+> with sample size and every resampling scheme is biased low. The first attempt put the point
+> estimate **outside its own interval** (0.9783 vs [0.9035, 0.9235]); subsampling fails at every
+> ratio tried. Coverage is reported as a point estimate marked `(no CI)` — saying so beats
+> shipping a plausible-looking number that is biased by construction.
+>
+> **The harness was under-powered and the leaderboard proved it (F34).** At n = 800 it reported
+> MIND AUC 0.4981 [0.4776, 0.5190]; the leaderboard scored **0.5568** — outside the interval.
+> `src/eval/run_all.py` now defaults to **20,000 impressions**, and no retriever decision should
+> be made on less.
+>
+> **Also measured:** random ranking scores nDCG@10 = 0.42 on EB-NeRD, because slates are ~11
+> items with one click. **Any slate table without a random row misleads.**
+
 
 One harness scoring both retrievers. Reads what [[2-Lexical-BM25]] and [[3-Semantic-Embeddings]]
 produce. Also home to the **leakage test** (Q9) and the **with/without serving-features comparison**

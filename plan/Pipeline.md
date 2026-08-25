@@ -76,16 +76,32 @@ the cheapest way to guarantee that is to make them satisfy one contract.
 
 ## Phase files
 
-| Phase | File | Covers | Depth |
+| Phase | File | Covers | State (2026-08-25) |
 |---|---|---|---|
-| 1 | [[1-Data-Pipeline]] | Q1 — extract, unify, temporal split, feature store, one-command rebuild | **Full** |
-| 2 | [[2-Lexical-BM25]] | Q2 — inverted index, query construction, BM25, recall@K | **Full** |
-| 3 | [[3-Semantic-Embeddings]] | Q3 — encode, ANN, user vectors, lexical-vs-semantic | **Full** |
-| 4 | [[4-Evaluation-Harness]] | Q4 — metrics, beyond-accuracy, slices, bootstrap CIs, leakage test | **Full** |
-| 5 | [[5-Submission-and-Note]] | Q5, Q6, Q7 — Codabench, design note, deliverables | Outline |
+| 1 | [[1-Data-Pipeline]] | Q1 — extract, unify, temporal split, feature store, one-command rebuild | ✅ **done** — 42 s rebuild |
+| 2 | [[2-Lexical-BM25]] | Q2 — inverted index, query construction, BM25, recall@K | ✅ **done** — + 54-cell sweep |
+| 3 | [[3-Semantic-Embeddings]] | Q3 — encode, ANN, user vectors, lexical-vs-semantic | ✅ built — ⬜ **not yet scored** |
+| 4 | [[4-Evaluation-Harness]] | Q4 — metrics, beyond-accuracy, slices, bootstrap CIs, leakage test | ✅ **done** — 93 tests |
+| 5 | [[5-Submission-and-Note]] | Q5, Q6, Q7 — Codabench, design note, deliverables | 🟡 MIND scored; EB-NeRD + note pending |
 
-Phases 1–4 are written to be executed. Phase 5 is deliberately an outline: its content is determined
-by what phases 1–4 actually produce, and writing it in detail now would be inventing results.
+Each phase file now opens with an **as-built** block recording what was actually produced and where
+it diverged from the plan. The plans themselves are left intact below those blocks — the divergences
+are the interesting part, and deleting the original reasoning would hide them.
+
+> [!important] Where the plan was wrong, and it matters
+> Two of this document's framing assumptions did not survive measurement:
+>
+> - **Phase 2 assumed the lexical/semantic axis was the interesting one.** It is not. A
+>   *recency-only* retriever that ignores the user entirely scores recall@50 = 0.9050 on EB-NeRD,
+>   while BM25 over the full corpus is statistically indistinguishable from popularity (F16, F21).
+>   Candidate generation on news is primarily a **freshness** problem.
+> - **Phase 3 named `xlm-roberta-base` as the encoder because the brief names it.** The Danish
+>   probe shows it cannot separate related from unrelated Danish text at all — margin +0.0018
+>   against MiniLM's +0.6271 (F37). The plan's own D2 predicted this from theory; the probe turned
+>   it into a number.
+>
+> Both are reported rather than quietly corrected: a measured failure is a stronger design-note
+> paragraph than a silent substitution.
 
 ## The data, as measured
 

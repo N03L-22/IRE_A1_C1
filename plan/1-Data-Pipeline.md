@@ -2,10 +2,28 @@
 type: note
 kind: reference
 title: Phase 1 — Data pipeline (Q1)
-status: planned
+status: done
 ---
 
 # Phase 1 — Data pipeline (Q1)
+
+> [!success] As built (2026-08-25) — `src/data/`
+> Both datasets build into one unified, temporally-split parquet store in **42 s**
+> (`make clean && make data && make store`). The leakage boundary is enforced in
+> `split.py` and verified by mutation tests that prove the checker bites.
+>
+> **What the plan got right:** the union-corpus argument (D3). Measured: 23.3% of MIND dev
+> clicks land on articles absent from train's `news.tsv`, so a per-split corpus would have
+> capped recall at **0.767** invisibly (F2/F20, D-CORPUS).
+>
+> **What changed since planning:**
+> - A **`large` tier** was added for Q5 (`mind/large_test`, `ebnerd/large`, `ebnerd/testset`),
+>   marked in-code as the unlabelled leaderboard split (F14).
+> - `EbnerdReader.impressions()` now **intersects its column list with the actual schema** —
+>   the test split has 14 columns against train's 17, and a hardcoded list crashed the first
+>   submission run with `KeyError: 'article_ids_clicked'` (F33).
+> - `impressions_row_group()` added, exposing parquet row groups as the unit of parallelism.
+
 
 The executable half of Q1. [[Pipeline]] says what a correct pipeline looks like; this file says what
 to build, in what order, with which alternative rejected and why. Decisions get logged to

@@ -2,10 +2,35 @@
 type: note
 kind: reference
 title: Phase 3 — Semantic retrieval, embeddings + ANN (Q3)
-status: planned
+status: done
 ---
 
 # Phase 3 — Semantic retrieval (Q3)
+
+> [!success] As built (2026-08-25) — `src/retrieval/{encode,semantic,fusion}.py`
+> Own embeddings, conditional pooling, brute-force/HNSW index, RRF fusion, and a popularity
+> prior. **Not yet scored through the harness** — that run is next.
+>
+> **D2's encoder choice was settled by measurement, and the plan's theory was right (F37).**
+> `danish_probe()` gates every Q3 number:
+>
+> | Encoder | Related | Unrelated | Margin | Verdict |
+> |---|---|---|---|---|
+> | `xlm-roberta-base` (768-d) | 0.9972 | 0.9954 | **+0.0018** | **OVERLAPS** |
+> | `MiniLM` (384-d) | 0.6523 | 0.0253 | **+0.6271** | **SEPARATES** |
+>
+> XLM-R rates *"Brøndby beat FCK"* and *"an apple cake recipe"* as 0.995 similar. The
+> anisotropy D2 predicted is real and severe. **MiniLM is the working default**; `xlmr-base`
+> stays as the brief-named ablation row, reported as a measured failure rather than dropped.
+>
+> **D3 shipped as a conditional ladder**, not a plain recency-weighted mean: mean when history
+> coherence ≥ τ, else recent-half, else max-pool. `strategy_counts` is reported so the branch
+> is only justified if it actually branches.
+>
+> **Encoder throughput, measured on the RTX 4060:** length-sorted batching (1.80×) plus
+> pipelined tokenisation (1.27×) plus vector caching = **6,286 art/s**. Larger batches are
+> *slower* — the model is launch-latency bound, and VRAM (0.36 of 8 GB) is not the constraint.
+
 
 The second retriever, satisfying the same `Retriever` interface defined in [[2-Lexical-BM25]].
 Scored by the same harness ([[4-Evaluation-Harness]]). Architecture context in [[Pipeline]].

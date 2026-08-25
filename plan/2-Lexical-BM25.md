@@ -2,10 +2,28 @@
 type: note
 kind: reference
 title: Phase 2 — Lexical retrieval, BM25 (Q2)
-status: planned
+status: done
 ---
 
 # Phase 2 — Lexical retrieval (Q2)
+
+> [!success] As built (2026-08-25) — `src/retrieval/`
+> `bm25s`-backed BM25 over title + abstract, an independent textbook implementation as the
+> D1 correctness check, NFC-safe tokeniser, and a 54-cell parallel sweep (44 s on 12 workers).
+>
+> **The headline finding contradicts the phase's own framing (F21–F23).** BM25 on the full
+> corpus is *statistically indistinguishable from popularity* on EB-NeRD, and **loses to it on
+> MIND** with non-overlapping CIs. The 24-hour recency window is worth **33×**; the `k1`/`b`
+> knobs are worth ~0.01, inside the CI. So D5's sweep mattered far less than F16's pool choice.
+>
+> **Abstracts (D2) measured (F28):** they are ~75% of the index and buy **+0.011 recall against
+> a ±0.030 CI** — not measurably better than titles alone. Kept because Q2.1 is binding;
+> reported as the null result it is.
+>
+> **Added since planning:** `score_subset()` for the submission path — scores a slate directly
+> instead of retrieving top-K over the corpus and discarding 99%. **16× faster** (162 → 2,570
+> impressions/s), ranking-equivalent (0 discordant pairs), never used for a reported metric (F32).
+
 
 Build the first of two retrievers. [[1-Data-Pipeline]] produces the feature store this reads;
 [[4-Evaluation-Harness]] scores what this produces. Architecture context in [[Pipeline]].

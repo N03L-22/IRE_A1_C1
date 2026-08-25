@@ -2,10 +2,28 @@
 type: note
 kind: reference
 title: Phase 5 — Codabench submission and design note (Q5–Q7)
-status: planned
+status: in-progress
 ---
 
 # Phase 5 — Submission and design note (Q5, Q6, Q7)
+
+> [!success] As built (2026-08-25) — `src/submit/codabench.py`, `report/a1_report.tex`
+> **MIND submitted and scored: AUC 0.5568, MRR 0.2646, nDCG@5 0.2778, nDCG@10 0.3331**
+> (rank 75/84). EB-NeRD prediction file generating at the time of writing.
+>
+> **Two failures worth keeping, both found by running the real thing:**
+> - The first upload was **rejected on a filename** — the scorer opens `prediction.txt`
+>   literally and our archive held `mind_prediction.txt`. The 2.37M predictions were correct
+>   (F35). Now a named constant with tests guarding both it and the built artefact.
+> - The first EB-NeRD run **crashed on the unlabelled test schema** (F33).
+>
+> **Cohort context:** median AUC 0.6121 across 50 classmate submissions; we are 0.055 below it.
+> The gap is not parameter tuning (measured at ~0.01) — it is the missing popularity signal and
+> the semantic/fusion rows, which are built but not yet scored.
+>
+> **Still open:** EB-NeRD submission, leaderboard screenshots (Q7.3), and the final report.
+> The draft is `report/a1_report.tex` (9 pages, compiles) and is findings-centred.
+
 
 **Outline only, deliberately.** The content of this phase is determined by what phases 1–4 actually
 produce; writing it in detail now would mean inventing results. It is expanded once the harness has

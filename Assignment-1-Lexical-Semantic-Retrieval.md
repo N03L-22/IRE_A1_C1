@@ -8,7 +8,7 @@ priority: high
 
 # Assignment 1 — Lexical & Semantic Retrieval on EB-NeRD and MIND
 
-📄 Brief: `Assignment1_v1.pdf` · 🎓 [[foundations|Startup foundations]] · 🏗️ [[architecture|Architecture & design decisions]]
+📄 Brief: `brief/Assignment1_v1.pdf` · 🎓 [[foundations|Startup foundations]] · 🏗️ [[architecture|Architecture & design decisions]]
 
 > [!tip] Reading order
 > New to retrieval / no SMAI or iNLP? **[[foundations|foundations.md]] first** — it builds every term
@@ -23,7 +23,7 @@ priority: high
 > | **C1** (this folder) | Lexical + semantic retrieval, temporal split, offline metrics | Individual | 2026-08-27 | 5% |
 > | **C2** | Click-log modelling, re-rank, **baseline beaten** (ablation), serving/cost analysis | **Pairs** | 2026-09-10 | 5% |
 >
-> `Assignment1_v1.pdf` is the **C1** brief — its Q1–Q9 covers C1's scope only. The C2 spec is a
+> `brief/Assignment1_v1.pdf` is the **C1** brief — its Q1–Q9 covers C1's scope only. The C2 spec is a
 > separate document (course proposal references `revisions/assignment-1-revision.md`); it isn't here yet.
 >
 > **C1 feeds C2:** "baseline beaten" is a C2 deliverable, and C1's numbers are that baseline. Tag the
@@ -92,7 +92,7 @@ context, and article content. Three modelling axes: **lexical** (BM25/TF-IDF), *
 single free GPU in a few hours.
 
 ## Files
-`Assignment1_v1.pdf` — the brief. Code goes here once the GitHub Classroom repo is cloned.
+`brief/Assignment1_v1.pdf` — the brief. Code goes here once the GitHub Classroom repo is cloned.
 A local git repo is initialised here; `.gitignore` excludes `data/`, `*.zip`, checkpoints (Q8 policy).
 
 ## Raw data — status

@@ -711,8 +711,8 @@ impression are correlated, and resampling them independently understates the int
 # Part E · What the data actually looks like
 
 Everything above Part E was written from the brief. **This part is measured** — from
-`Assignment1_v2.pdf` and from the two exploration notebooks (`mind_analysis.ipynb`,
-`ebnerd_analysis.ipynb`) run on the downloaded bundles on 2026-08-21. Where a number here contradicts
+`brief/Assignment1_v2.pdf` and from the two exploration notebooks (`notebooks/mind_analysis.ipynb`,
+`notebooks/ebnerd_analysis.ipynb`) run on the downloaded bundles on 2026-08-21. Where a number here contradicts
 an assumption earlier in the doc, this part wins.
 
 > [!important] Nothing in this part is a retrieval metric
@@ -723,7 +723,7 @@ an assumption earlier in the doc, this part wins.
 
 ## E1 · What changed between brief v1 and v2
 
-`Assignment1_v1.pdf` → `Assignment1_v2.pdf`. **Q1–Q9, the deliverables, the rubric, the due date
+`brief/Assignment1_v1.pdf` → `brief/Assignment1_v2.pdf`. **Q1–Q9, the deliverables, the rubric, the due date
 (2026-08-27) and the references are byte-identical.** Every change is in the datasets/logistics
 section on pages 1–2, and every change pushes in one direction: *the large bundles are now required.*
 

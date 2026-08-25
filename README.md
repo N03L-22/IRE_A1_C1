@@ -7,9 +7,17 @@ News-recommendation candidate generation on **MIND** (English) and **EB-NeRD** (
 reproducible data pipeline, lexical retrieval, and an offline evaluation harness with bootstrap
 confidence intervals.
 
-> **Status.** Q1, Q2, Q4 and Q9 are built and measured. **Q3 (semantic retrieval) is not yet
-> built.** Prediction files are generated but **not yet submitted**, so no leaderboard score exists.
-> Nothing in this repo is estimated — anything unmeasured is absent, not guessed.
+> **Status.** Q1–Q5, Q7 and Q9 complete; Q6 design note at 4 pages. Both leaderboards submitted.
+>
+> | MIND submission | AUC |
+> |---|---|
+> | BM25 | 0.5568 |
+> | + RRF fusion with semantic | 0.5934 |
+> | + 256-d truncation | **0.5938** |
+>
+> EB-NeRD (BM25) submitted, awaiting score. **Nothing here is estimated** — anything unmeasured is
+> absent, not guessed, and the three leaderboard results above are also the evidence that our
+> *offline* harness is an unreliable proxy for them (F34, F42, F58).
 
 ---
 
@@ -21,7 +29,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 make data && make store    # raw archives -> unified, temporally-split parquet store
 make bm25                  # BM25 vs baselines, both datasets
 make eval                  # full harness: metrics, slices, bootstrap CIs
-make test                  # 72 tests, incl. the leakage mutation test
+make test                  # 100 tests, incl. the leakage mutation test
 ```
 
 Everything downstream reads `data/store/`, so `make store` is the only step that touches raw files.
@@ -62,13 +70,18 @@ being absent is fatal, because no downstream re-ranker can recover it. Ranking i
 ```
 src/
   data/         extract, per-dataset readers, unified schema, temporal split
-  retrieval/    Retriever protocol, tokeniser, BM25 (+ reference implementation)
-  eval/         metrics (two regimes), bootstrap, slices, harness, runner
+  retrieval/    Retriever protocol, tokeniser, BM25 (+ own reference impl),
+                encoder, semantic retriever, RRF fusion
+  eval/         metrics (two regimes), bootstrap, slices, harness, sweeps
   submit/       Codabench prediction files
-tests/          72 tests, incl. leakage mutation tests
-plan/           phase plans + execution log (the F-numbered findings)
+tests/          100 tests, incl. leakage mutation tests
+plan/           phase plans + execution log (findings F1-F58)
 results/        every measured run, as JSON with CIs and resolved budget
-report/         a1_report.tex — the Q6 design note source
+report/         a1_design_note.tex (the Q6 deliverable) + figs/ screenshots
+notebooks/      one-off data exploration; NOT part of the pipeline
+brief/          the assignment PDFs, v1 and v2
+submissions/    prediction metadata (the .txt/.zip are gitignored)
+configs/        per-dataset paths and resource budget
 ```
 
 ### Documents
@@ -78,7 +91,9 @@ report/         a1_report.tex — the Q6 design note source
 | [`foundations.md`](foundations.md) | Every concept from scratch — vectors, BM25, embeddings, and the evaluation metrics built up need → why → how |
 | [`architecture.md`](architecture.md) | What the system **is**, plus the measured dataset facts |
 | [`decisions.md`](decisions.md) | What we **chose and rejected**, open questions, and the cost of each choice — the design-note source |
-| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F33, dated. Also the architecture changelog |
+| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F58, dated. Also the architecture changelog |
+| [`mistakes.md`](mistakes.md) | Every defect found, in plain terms — seven of eight did not crash |
+| [`ai-log.md`](ai-log.md) | Q7.4 deliverable: curated prompts, what worked, what failed |
 
 ---
 

@@ -671,6 +671,52 @@ point: C-2 may score far wider candidate sets, which is the thing that would act
 pay. But **that gets profiled, not projected** — projecting is the error this whole section records,
 and the "bigger dataset benefits more" intuition was already wrong once.
 
+> [!warning] F59 tested the GPU half and generalised to both. F60 corrects that.
+> "Polars + GPU is not helpful" was too broad a conclusion from a GPU-only measurement. Profiling
+> the EB-NeRD run end to end gives a different picture: **setup is ~60% of it**, and history
+> handling is 58.5% of setup — a stage F59 never touched.
+>
+> | Phase (EB-NeRD test scale) | sec | share of setup |
+> |---|---|---|
+> | histories: **raw pyarrow read** | **1.5** | 0.6% |
+> | histories: **arrow → python objects** | **158.6** | **58.5%** |
+> | impressions: stream | 105.7 | 39.0% |
+> | articles | 5.2 | 1.9% |
+> | **total** | **271.1 (4.5 min)** | peak RSS 15.14 GB |
+>
+> **Polars *does* help, and F60 got the reason backwards (corrected by F62).** Measured on the same
+> file:
+>
+> | Step | pyarrow | polars |
+> |---|---|---|
+> | Read → columnar | **1.66 s** | 3.06 s — polars is **slower** |
+> | Export → Python objects | 28.43 s | **3.00 s — 9.5× faster** |
+> | Stay columnar → numpy | — | **0.35 s, 0.47 GB** for 116.8M clicks |
+>
+> Polars wins on **export**, the step F60 claimed it could not touch, and loses on the read. And
+> staying columnar entirely — `explode().to_numpy()` — replaces 158.6 s and ~13 GB with **0.35 s and
+> 0.47 GB**: ~450× faster, ~27× smaller.
+>
+> **The genuine opportunity is columnar histories** — keeping clicks as int arrays
+> rather than objects, which `CompactHistories` (F36) already does in the workers for a measured
+> −39% RSS and +45% throughput. Extending it to the loader is worth ~2.5 min/run and most of the
+> 15 GB peak. **Deliberately not done in C-1:** the truncation `t < cutoff` *is* the Q9 leakage
+> boundary, and F36 already declined to change types across that comparison for exactly this
+> reason. A GPU cannot touch *this* stage — object allocation is interpreter-bound, and the
+> impression stream is I/O-bound.
+>
+> **Where the GPU does pay (F63):** MinHash over the article corpus — 128 permutations × ~22
+> shingles per document is dense batched arithmetic, unlike slate scoring's 11 dot products.
+> **125,061 articles signed in 0.6 s (200,788 docs/s); full pipeline 6.1 s**, reducing 7.82 billion
+> pairs to 561,638 candidates (0.00718%) and finding **4,141 articles (3.31%) in near-duplicate
+> pairs**, plus 2,575 exact duplicates (2.06%). A corpus property, not a result — no metric was run
+> against it, so no improvement is claimed.
+>
+> **The transferable point, revised twice:** naming a library is not naming a bottleneck — and
+> guessing *which step* a library optimises is the same error as guessing where the time goes.
+> F59 and F60 made that mistake in consecutive findings, in opposite directions. Measure the
+> specific step.
+
 ---
 
 # Part 5 · The earlier decision record (merged from architecture.md Part D)

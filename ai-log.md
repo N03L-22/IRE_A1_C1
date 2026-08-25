@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Nine defects, all in `mistakes.md` with full detail. **Eight of nine did not crash** — every one
+Ten defects, all in `mistakes.md` with full detail. **Nine of ten did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -826,3 +826,7 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 04:08 · `0df5ffb1`
 
 > lets do the polar with GPU on the branch now
+
+### 2026-08-26 05:02 · `0df5ffb1`
+
+> can we still use polar and gpu and find a work around for q9?

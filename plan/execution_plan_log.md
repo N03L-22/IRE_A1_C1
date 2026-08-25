@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F59.**
+> **One day to the 2026-08-27 deadline. Findings F1–F63.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -727,6 +727,159 @@ position after F59 is that **this must be profiled in C-2 rather than projected*
 precisely the error this finding records, and the intuition that "the bigger dataset benefits more"
 was already wrong once here. The branch is kept as a starting point, not as a conclusion.
 → `mistakes.md` bug 9.
+
+### F60 — The EB-NeRD bottleneck is Arrow→Python conversion, not Parquet reading, so Polars cannot fix it
+F59 measured only the *scoring* stage and concluded "Polars + GPU is not helpful". **That
+conclusion overreached: it tested the GPU half and never tested the Polars half.** Measured here at
+full EB-NeRD test scale (125,541 articles, 807,677 users, 116,825,984 clicks, 13,536,710
+impressions):
+
+| Phase | sec | share of setup |
+|---|---|---|
+| articles: parquet → python objects | 5.2 | 1.9% |
+| **histories: raw pyarrow read** | **1.5** | **0.6%** |
+| **histories: arrow → python objects** | **158.6** | **58.5%** |
+| impressions: stream | 105.7 | 39.0% |
+| **SETUP TOTAL** | **271.1 (4.5 min)** | peak RSS **15.14 GB** |
+
+**Setup is ~60% of the EB-NeRD run, and history handling is ~59% of setup** — which is the part
+F59 never looked at.
+
+> [!important] The decisive split: 1.5 s vs 158.6 s
+> Reading the 1.16 GB history parquet into Arrow takes **1.5 seconds**. Turning that Arrow table
+> into 807,677 `History` objects takes **158.6 seconds — 106× longer.**
+>
+> **The real fix is to not materialise them at all** — keep clicks in Arrow/numpy columns and index
+> them, which is precisely what `CompactHistories` (F36) already does for the worker path and why it
+> cut RSS 39% and *raised* throughput 45%.
+
+> [!warning] **F60 first claimed "Polars replaces the reader, and the reader is 0.6%, so Polars
+> cannot help". That is wrong — see F62, which measured it.** Polars is *slower* at reading and
+> **9.5× faster at exporting**, which is the step that actually dominates. The corrected version is
+> in F62; this paragraph is left as written because assuming what a library optimises, instead of
+> measuring it, is the same error F59 made one finding earlier.
+
+**Revised verdict on Part 4c.** The two halves of that proposal have opposite outcomes, and F59
+wrongly generalised from one to both:
+
+| Half | Targets | Verdict |
+|---|---|---|
+| **GPU batched scoring** | semantic scoring, ~11% of run | **Refuted** — 1.6× MIND, 1.2× EB-NeRD (F59) |
+| **Polars** | the reader, 0.6% of setup | **Refuted, but for a different reason** — right area, wrong mechanism |
+| *(unproposed)* **columnar histories** | 58.5% of setup | **The actual opportunity** — ~2.5 min/run and the 88%-of-RSS problem |
+
+*Consequence for the RAM question:* yes, this lowers peak memory — but through the columnar
+representation, not through Polars. F36 measured 15.08 GB → 9.25 GB from exactly this change on the
+worker path, and the residual it names is the 116.8M `datetime` objects the int-array change did not
+touch. Extending it to the loader is the same trick applied one level up. **Not done for C-1:** the
+truncation `t < cutoff` *is* the Q9 leakage boundary (F36's stated reason), and changing the type on
+both sides of that comparison is a correctness risk that a 2.5-minute saving does not justify one
+day from the deadline.
+
+*On GPU for this stage:* it does not apply. The 158.6 s is Python object allocation, which is
+interpreter-bound, not arithmetic — there is no kernel to launch. The 105.7 s impression stream is
+I/O-bound. Neither is work a GPU can take.
+
+### F61 — MinHash/LSH from the LMA project does not transfer: it solves a different problem
+Checked `Subjects/LMA/Projects/Individual-Small-LM/src/pipeline/common/minhash.py` (404 lines,
+MinHash + LSH, 128 permutations, 32 bands × 4 rows) for reuse here. **It should not be reused, and
+the reason is worth recording because the word "dedup" is doing double duty.**
+
+| | LMA | IRE (this assignment) |
+|---|---|---|
+| What is deduplicated | whole documents | query *terms* |
+| Scale | 2.9M docs → 4.2 trillion pairs | ~120 tokens in one query |
+| "Duplicate" means | **near**-duplicate, Jaccard ≥ 0.8 | **exact** string equality |
+| Method needed | MinHash + LSH (exact is infeasible) | `dict.fromkeys()`, O(n) |
+
+`build_query(dedup=True)` already deduplicates exactly, in one pass over ~120 items, preserving
+first-seen order. **MinHash would replace an exact O(n) operation with an approximate one that costs
+more** — it exists to avoid comparing all pairs, and there are no pairs to avoid here.
+
+*Where near-duplicate detection would genuinely apply in IRE:* the **article corpus**, not the
+query — news wires republish near-identical stories, so a slate could hold several versions of one
+event and a recall metric would count them as distinct. That is a real question and **it is
+unmeasured here**; it is a candidate-diversity concern, which is Component 2's territory. Flagged,
+not claimed.
+
+### F62 — Polars is *slower* to read and 9.5× faster to export: F60's reasoning was backwards
+F60 asserted Polars could not help because "Polars replaces the reader, and the reader is 0.6% of
+setup". **Measured on the same 1.16 GB history parquet, that is wrong in both halves.**
+
+| Step | pyarrow | polars | |
+|---|---|---|---|
+| **Read** — file → in-memory columnar | **1.66 s** | 3.06 s | polars **0.54×** — *slower* |
+| **Export** — columnar → Python objects | 28.43 s | **3.00 s** | polars **9.5× faster** |
+| **Stay columnar** — → numpy, no Python objects | — | **0.35 s** | 116,825,984 ints in **0.47 GB** |
+
+**Polars' advantage is entirely in the export path — the exact step F60 said it could not touch.**
+Its Rust-side list-to-Python conversion is an order of magnitude better than PyArrow's
+`to_pylist()`, and reading was never where it wins.
+
+> [!important] The row that matters is the third one
+> `explode().to_numpy()` gives all **116.8M clicks in 0.35 s and 0.47 GB**, against **158.6 s and
+> ~13 GB** as `History` objects. That is **~450× faster and ~27× smaller** — and it is not a
+> different technique from F36's `CompactHistories`, it is the *same idea* (`array('i')` indices
+> instead of Python objects) reached in one call instead of a hand-rolled loop.
+>
+> So the honest ranking of Part 4c's proposal, third revision:
+>
+> | Half | Verdict |
+> |---|---|
+> | GPU batched scoring | **Refuted** — 1.6× MIND, 1.2× EB-NeRD, ~11% of run (F59) |
+> | **Polars** | **Vindicated, for a reason neither F59 nor F60 identified** — not the reader, the *export* |
+
+**What this does not change.** The blocker on adopting it is unchanged and is not performance: the
+truncation `t < cutoff` **is** the Q9 leakage boundary, and moving histories to columnar arrays
+changes the type on both sides of that comparison. F36 declined exactly this, for exactly this
+reason, and `tests/test_submit.py::test_compact_histories_match_history_before` exists because the
+worker-path version needed pinning against `History.before()` across six cutoffs. Doing it in the
+loader needs the same test, one day from the deadline, on the assignment's correctness surface.
+**Recommended for C-2, with that test written first.**
+
+> [!warning] Two findings in a row, same mistake
+> F59 projected a GPU speedup without profiling the whole. F60 then dismissed Polars without
+> profiling *what Polars actually optimises*. Both were assumptions about where time goes, stated
+> with enough specificity to look measured. **The rule earned here: before claiming a tool will or
+> will not help, measure the specific step you believe it changes.**
+
+### F63 — GPU MinHash over the full corpus takes 6.1 s and finds 3.31% near-duplicate articles
+F61 flagged corpus-level near-duplicate detection as the place MinHash *would* apply, and called it
+unmeasured. Now measured, on all 125,061 EB-NeRD articles with ≥3 tokens (480 empty/near-empty
+excluded — they match each other trivially and inflated a first pass from 5,495 pairs to 14,410).
+
+| Stage | Time | |
+|---|---|---|
+| Shingling (word triples) | 1.6 s | CPU, unavoidable |
+| **MinHash signatures, 128 perms** | **0.6 s** | **CUDA — 200,788 docs/s** |
+| LSH banding, 32×4 | 3.9 s | 7.82 **billion** pairs → 561,638 candidates (**0.00718%**) |
+| Jaccard verification | 1.4 s | on candidates only |
+| **Total** | **6.1 s** | |
+
+**Findings:**
+
+| | count | share of corpus |
+|---|---|---|
+| Exact-duplicate texts | 2,575 | **2.06%** |
+| Verified near-dupes (Jaccard ≥ 0.8) | 5,495 pairs | — |
+| Articles in ≥1 near-dup pair | 4,141 | **3.31%** |
+
+Genuine republished items, not artefacts — e.g. *"Sofia, 21 år og fra København"* under two
+different article ids.
+
+**Why the GPU is the right tool here and was not for F59.** This is dense arithmetic with a large
+work-per-item ratio: 128 permutations × ~22 shingles per document, batched 4,096 documents at a
+time. That is exactly the shape F59 found *missing* in slate scoring, where 11 dot products per
+query left the GPU stage at 21% of the path. **Same hardware, opposite verdict, because the ratio
+is different** — which is F59's own rule (*batching pays in proportion to work-per-query*) coming
+out the other way.
+
+**What it would be for, and what is not claimed.** A slate containing three versions of one story
+offers less real choice than three distinct articles, and recall counts them as distinct — so this
+is a **candidate-diversity** measure. **Not run against any metric here**, so no claim is made that
+deduplicating improves recall, nDCG, or leaderboard AUC; 3.31% is an upper bound on how much could
+move. Deciding that needs a paired run, which belongs with the C-2 re-ranker where diversity is the
+explicit objective. Recorded as a measured corpus property, not a result.
 
 ## Findings
 

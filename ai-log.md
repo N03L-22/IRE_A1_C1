@@ -435,3 +435,11 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 00:57 · `0df5ffb1`
 
 > uploaded ebnerd, check if fusion is done
+
+### 2026-08-26 01:00 · `0df5ffb1`
+
+> will increasing or decreasing the decay for recency affect greatly? or will the next zip files be having version numberings to identify?
+
+### 2026-08-26 01:03 · `0df5ffb1`
+
+> yes, do both. same params could still overlap, ,so dataset retreiver param and iter within same combination?

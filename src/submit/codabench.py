@@ -66,6 +66,36 @@ WORKER_GB = 9.5
 #: impression ids after the workers exit.
 MERGE_HEADROOM_GB = 3.0
 
+def submission_stem(dataset: str, retriever: str, params: dict, out_dir: Path) -> str:
+    """`{dataset}_{retriever}_{paramhash}_i{n}` -- unique per run.
+
+    Four components, each earning its place:
+
+    ``dataset``     two competitions, two formats.
+    ``retriever``   bm25 vs fusion is the comparison we want to keep.
+    ``paramhash``   6 hex chars over the sorted params, so a window or decay
+                    sweep does not collapse into one filename.
+    ``i{n}``        auto-incremented. Identical params re-run is normal --
+                    after a bug fix, or on a different machine -- and those
+                    are still distinct artefacts with distinct leaderboard
+                    rows. Without this the second run would silently replace
+                    the first.
+
+    The full params live in the .meta.json beside each file; the hash is only
+    for uniqueness, not for reading back.
+    """
+    import hashlib
+
+    digest = hashlib.sha256(
+        "|".join(f"{k}={params[k]}" for k in sorted(params)).encode()
+    ).hexdigest()[:6]
+    base = f"{dataset}_{retriever}_{digest}"
+    n = 1
+    while (out_dir / f"{base}_i{n}_prediction.zip").exists():
+        n += 1
+    return f"{base}_i{n}"
+
+
 def build_retriever(kind: str, dataset: str):
     """The retriever a submission is generated with.
 
@@ -504,6 +534,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--out-dir", type=Path, default=Path("submissions"))
     p.add_argument("--max-k", type=int, default=500)
     p.add_argument(
+        "--window-hours", type=float, default=0.0,
+        help="recency window in hours; 0 disables it. EB-NeRD only -- MIND has "
+             "no publish time (F20). Part of the run identity, so a window "
+             "sweep produces separately-named submissions.",
+    )
+    p.add_argument(
         "--retriever", choices=["bm25", "semantic", "fusion"], default="fusion",
         help="which retriever generates the predictions (default: fusion, "
              "the best MIND retriever on both leaderboard metrics -- F39)",
@@ -547,15 +583,27 @@ def main(argv: list[str] | None = None) -> int:
     log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
 
     params = BEST[args.dataset]
+    run_params = {
+        **params,
+        "retriever": args.retriever,
+        "window_hours": args.window_hours,
+        "max_k": args.max_k,
+    }
     retriever = build_retriever(args.retriever, args.dataset)
     t0 = time.perf_counter()
     retriever.index(list(articles.values()))
     log.info("indexed %s in %.1fs", retriever.name, time.perf_counter() - t0)
 
-    # Name by retriever so runs never overwrite each other. Comparing a BM25
-    # submission against a fusion one is a reportable result (F39), and that
-    # is impossible if the second run silently replaces the first.
-    stem = f"{args.dataset}_{args.retriever}"
+    # Name by dataset, retriever, params AND iteration, so no run can ever
+    # overwrite another. Comparing two submissions on one leaderboard is a
+    # reportable result (F39) and needs both artefacts to survive.
+    #
+    # The param hash alone is not enough: re-running an identical
+    # configuration is a normal thing to do (a fixed bug, a different
+    # machine), and those are genuinely different artefacts with different
+    # leaderboard rows. The iteration counter is what separates them.
+    stem = submission_stem(args.dataset, args.retriever, run_params, args.out_dir)
+    log.info("submission stem: %s", stem)
     txt = args.out_dir / f"{stem}_prediction.txt"
     if hasattr(reader, "impressions_row_group") and budget.n_jobs > 1:
         # Parquet-backed readers expose row groups, the natural unit of
@@ -588,7 +636,8 @@ def main(argv: list[str] | None = None) -> int:
     meta = args.out_dir / f"{stem}_prediction.meta.json"
     meta.write_text(json.dumps({
         "dataset": args.dataset, "tier": args.tier,
-        "retriever": retriever.name, "retriever_kind": args.retriever, "params": params,
+        "retriever": retriever.name, "retriever_kind": args.retriever,
+        "params": params, "run_params": run_params, "stem": stem,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "budget": budget.as_dict(), **stats,
     }, indent=2))

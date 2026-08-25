@@ -253,10 +253,42 @@ def test_submission_filenames_are_namespaced_by_retriever() -> None:
     replaces the first. The outer zip name is free (Codabench tracks by
     submission id, not filename); only the member inside is constrained.
     """
-    import re
     src = Path("src/submit/codabench.py").read_text()
-    assert 'stem = f"{args.dataset}_{args.retriever}"' in src
+    assert "stem = submission_stem(" in src
     for suffix in ("_prediction.txt", "_prediction.zip", "_prediction.meta.json"):
         assert f'f"{{stem}}{suffix}"' in src, f"{suffix} not namespaced"
     # The member name must still come from the per-competition table.
     assert "SUBMISSION_MEMBER[args.dataset]" in src
+
+
+def test_submission_stem_is_unique_per_run(tmp_path) -> None:
+    """Four components, and each one has to matter.
+
+    Naming by retriever alone was not enough: re-running the SAME
+    configuration is normal (after a bug fix, or on another machine) and
+    produces a genuinely different artefact with its own leaderboard row.
+    Without the iteration counter the second run silently replaces the first,
+    which is exactly what this project already got wrong once when every run
+    wrote to a fixed {dataset}_prediction.* path.
+    """
+    from src.submit.codabench import submission_stem
+
+    p = {"k1": 1.6, "b": 0.75, "last_n": 5, "retriever": "fusion"}
+
+    # Same params, repeated runs -> i1, i2, i3 (the zip is what marks a run
+    # as taken, so create it between calls).
+    seen = []
+    for expected in (1, 2, 3):
+        stem = submission_stem("mind", "fusion", p, tmp_path)
+        assert stem.endswith(f"_i{expected}"), stem
+        seen.append(stem)
+        (tmp_path / f"{stem}_prediction.zip").write_text("")
+    assert len(set(seen)) == 3, "iterations collided"
+
+    # Any param change -> different hash, so the counter restarts cleanly.
+    other = submission_stem("mind", "fusion", {**p, "window_hours": 24.0}, tmp_path)
+    assert other.endswith("_i1")
+    assert other.split("_")[2] != seen[0].split("_")[2], "param change did not alter the hash"
+
+    # Dataset and retriever stay in the name -- they are the comparison axes.
+    assert submission_stem("ebnerd", "bm25", p, tmp_path).startswith("ebnerd_bm25_")

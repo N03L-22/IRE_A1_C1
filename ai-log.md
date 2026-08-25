@@ -461,3 +461,7 @@ here — noted so the gap does not recur silently.
 ### 2026-08-26 01:12 · `0df5ffb1`
 
 > run all four.
+
+### 2026-08-26 01:42 · `0df5ffb1`
+
+> if the total time is less, we can run 3 10 min sessions to check the effects this has. and honestly lower dim equals lower ram used, which is better and if difference aint too much its a good result

@@ -110,3 +110,46 @@ def format_ci(mean: float, lo: float, hi: float, n: int | None = None) -> str:
     if n is not None:
         body += f", n = {n:,}"
     return body
+
+
+def paired_difference_ci(
+    a: Sequence[float],
+    b: Sequence[float],
+    b_val: int = DEFAULT_B,
+    alpha: float = DEFAULT_ALPHA,
+    seed: int = DEFAULT_SEED,
+) -> tuple[float, float, float, bool]:
+    """CI on the DIFFERENCE between two retrievers, scored on the same impressions.
+
+    Returns ``(mean_diff, ci_low, ci_high, significant)``.
+
+    **Why this exists rather than comparing two separate intervals.**
+    "Do the CIs overlap?" is a conservative approximation, not the test. Two
+    intervals can overlap substantially while the difference is still
+    significant, because the retrievers are evaluated on the *same*
+    impressions -- so the per-impression noise is shared and cancels when you
+    subtract. Comparing marginal intervals throws that pairing away.
+
+    The elements of ``a`` and ``b`` must correspond to the same impressions in
+    the same order, which is what ``measure()`` guarantees when two retrievers
+    are scored over one split.
+
+    > [!note] A null result here can mean two different things
+    > Either the effect is genuinely absent, or the experiment could not have
+    > seen it. Report how many impressions the two configurations actually
+    > *differ* on: the dedup ablation differed on **4 of 800**, so no
+    > statistical treatment could have resolved it. That is an underpowered
+    > experiment, not evidence of no effect.
+    """
+    x = np.asarray(a, dtype=np.float64)
+    y = np.asarray(b, dtype=np.float64)
+    n = min(len(x), len(y))
+    if n == 0:
+        return (float("nan"), float("nan"), float("nan"), False)
+    d = x[:n] - y[:n]
+
+    rng = np.random.default_rng(seed)
+    idx = rng.integers(0, n, size=(b_val, n))
+    draws = d[idx].mean(axis=1)
+    lo, hi = np.percentile(draws, [100 * alpha / 2, 100 * (1 - alpha / 2)])
+    return (float(d.mean()), float(lo), float(hi), bool(lo > 0 or hi < 0))

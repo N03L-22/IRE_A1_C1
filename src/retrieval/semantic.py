@@ -321,3 +321,82 @@ class HistoryIdRetriever(SemanticRetriever):
 
     def index(self, articles: list[Article]) -> None:
         super().index(articles)
+
+
+class MultiQueryRetriever(SemanticRetriever):
+    """Cluster the history, retrieve per centroid, merge (D3's rejected option).
+
+    **The failure this addresses.** A user who reads football *and* recipes
+    gets a mean vector sitting between the two clusters, matching neither.
+    Averaging is worst exactly when the user is most interesting.
+    `build_user_vector`'s conditional ladder detects that case and falls back;
+    this handles it properly instead, by issuing one query per interest.
+
+    **Why it is worth testing now rather than dismissing.** D3 named this
+    "considered, not built" on cost grounds. F40 then measured **46% of MIND
+    users falling back** from the mean because their history is incoherent
+    (against 0.2% on EB-NeRD). That is a large population for whom the shipped
+    representation is known to be a compromise, which changes the cost/benefit
+    the original decision assumed.
+
+    Merging is by **reciprocal rank**, the same scheme as `RRFusion`: each
+    centroid produces a ranking, and an article ranked well by more than one
+    interest beats one ranked well by a single interest. Scores across
+    centroids are not comparable (different query vectors, different
+    magnitudes), so fusing ranks rather than scores avoids inventing a
+    normalisation.
+
+    Cost is honest: ``c`` centroids means ``c`` searches per impression.
+    """
+
+    def __init__(self, *args, n_clusters: int = 3, rrf_k: int = 60, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.n_clusters = n_clusters
+        self.rrf_k = rrf_k
+        self.name = f"multiquery({self.model_key},c={n_clusters},n={self.last_n})"
+        #: How many centroids were actually used, so the report can say
+        #: whether the clustering ever fired or silently collapsed to one.
+        self.cluster_counts: dict[int, int] = {}
+
+    def _history_vectors(self, history_text: list[str]) -> np.ndarray | None:
+        recent = history_text[-self.last_n :] if self.last_n > 0 else history_text
+        rows = [self._by_text[t] for t in recent if t in self._by_text]
+        if not rows:
+            rows = [self._by_id[t] for t in recent if t in self._by_id]
+        return self._vecs[rows] if rows else None
+
+    def _centroids(self, vecs: np.ndarray) -> np.ndarray:
+        """K-means over the clicked vectors; falls back to the mean if tiny."""
+        k = min(self.n_clusters, len(vecs))
+        if k <= 1:
+            v, _ = build_user_vector(vecs, tau=self.tau)
+            return v.reshape(1, -1)
+        from sklearn.cluster import KMeans
+
+        km = KMeans(n_clusters=k, n_init=3, random_state=0).fit(vecs)
+        cents = km.cluster_centers_.astype(np.float32)
+        norms = np.linalg.norm(cents, axis=1, keepdims=True)
+        return cents / np.maximum(norms, 1e-12)
+
+    def retrieve(
+        self, history_text: list[str], k: int, at_time: datetime | None = None
+    ) -> list[tuple[str, float]]:
+        if self._vecs is None:
+            raise RuntimeError("index() must be called before retrieve()")
+        vecs = self._history_vectors(history_text)
+        if vecs is None or len(vecs) == 0:
+            return []
+
+        cents = self._centroids(vecs)
+        self.cluster_counts[len(cents)] = self.cluster_counts.get(len(cents), 0) + 1
+
+        fused: dict[str, float] = {}
+        for c in cents:
+            scores = self._vecs @ c
+            top = np.argpartition(-scores, min(k, len(scores) - 1))[:k]
+            top = top[np.argsort(-scores[top])]
+            for rank, i in enumerate(top, start=1):
+                aid = self._ids[int(i)]
+                fused[aid] = fused.get(aid, 0.0) + 1.0 / (self.rrf_k + rank)
+
+        return sorted(fused.items(), key=lambda kv: (-kv[1], kv[0]))[:k]

@@ -17,16 +17,16 @@ correct before starting the next. Doc and data-layout work come before coding.
 > |---|---|
 > | **Q1** pipeline, unified schema, temporal split | ✅ 42 s rebuild, both datasets |
 > | **Q2** BM25 over title + abstract | ✅ + 54-cell sweep, val only |
-> | **Q3** embeddings + ANN | ✅ **scored on both** — Q3.5 answered (F39) |
-> | **Q4** harness, CIs, slices | ✅ 95 tests |
-> | **Q5** Codabench | 🟡 **MIND scored AUC 0.5568**; EB-NeRD file validated, submitting |
+> | **Q3** embeddings + ANN | ✅ scored both; dimension swept (F47); multi-query under test |
+> | **Q4** harness, CIs, slices | ✅ 98 tests, + paired-difference test (F46) |
+> | **Q5** Codabench | ✅ **MIND 0.5568 → fusion 0.5934**; EB-NeRD submitted |
 > | **Q6** design note | ✅ **`report/a1_design_note.tex`, 3 pp** (≤4 limit met) |
 > | **Q9** leakage test + serving features | ✅ incl. mutation tests |
 > | Repo | ✅ `github.com/N03L-22/IRE_A1_C1`, pushed |
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **Two days to the 2026-08-27 deadline. Findings F1–F43.**
+> **Two days to the 2026-08-27 deadline. Findings F1–F47.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -39,10 +39,17 @@ correct before starting the next. Doc and data-layout work come before coding.
 >    [0.4776, 0.5190]; the leaderboard scored 0.5568, *outside* the CI. n = 800 was too small,
 >    and parameters were being chosen on it. Default is now 20,000.
 >
-> **Remaining:** curate the AI usage log (Q7.4, still raw), capture both leaderboard screenshots
-> (Q7.3). Optional upgrades are ranked by measured evidence in `decisions.md` Part 4b — the
-> highest-value ones are raising the evaluated sample (ablation rigour) and running HNSW on real
-> vectors (scale analysis), both named grading criteria.
+> **Remaining:** curate the AI usage log (Q7.4, still raw) and capture the leaderboard screenshots
+> (Q7.3). Every named ablation is now run (F41, F43, F46, F47).
+>
+> **The three results worth leading with:**
+> 1. **F47 — 256-d beats 384-d significantly at 34% less memory**, and only the paired test could
+>    see it. The best efficiency result in the project.
+> 2. **F42/F46 — the offline harness cannot rank retrievers at n=4,000.** Fusion was *not
+>    significant* offline (differing on 55/800) and scored **+0.0366 AUC** on 2.37M impressions.
+> 3. **F44 — we sit at the challenge's own "most clicks" baseline (59.70).** The winners at 87–89
+>    used GBDT/transformer re-rankers, which is Component-2, and their ablations independently
+>    identified the same two levers we found: popularity and article timeliness.
 
 ### F39 — Q3.5's answer flips between datasets, and fusion only helps where they disagree
 The full harness on both datasets, n = 4,000 each, MiniLM encoder, all retrievers in one pass.
@@ -163,7 +170,7 @@ Run on EB-NeRD, n=800, closing open questions O5 and O2 plus upgrades U4 and U7.
 | **O5** dedup=False | 0.0050 [0.0013, 0.0100] | 0.0175 | **inside the CI** — no evidence either way |
 | **U4** TF-IDF | 0.0063 [0.0013, 0.0125] | 0.0200 | **indistinguishable from BM25** |
 | **U7** ours: MiniLM 384d | 0.0037 [0.0000, 0.0088] | 0.0213 | — |
-| **U7** provided BERT 768d | 0.0013 [0.0000, 0.0037] | 0.0175 | *below* ours |
+| **U7** provided BERT 768d | 0.0013 [0.0000, 0.0037] | 0.0175 | **overlaps ours** — undecided |
 | **O2** exact (brute force) | 0.0037 [0.0000, 0.0088] | 0.0213 | the ceiling |
 | **O2** HNSW ef=128 / 256 | 0.0037 [0.0000, 0.0088] | 0.0213 | **identical to exact** |
 
@@ -180,8 +187,10 @@ Four results worth stating:
    vs exact. Random vectors in 768 dimensions are near-orthogonal, the worst possible case for a
    proximity graph; real embeddings cluster, which is the structure HNSW exploits. **The
    pessimistic figure should not be reported.**
-4. **U7: the provided click-trained BERT vectors scored *below* our generic MiniLM** (0.0013 vs
-   0.0037).
+4. **U7: the provided click-trained BERT vectors are *indistinguishable* from our generic MiniLM**
+   — 0.0013 [0.0000, 0.0037] against 0.0037 [0.0000, 0.0088]. The intervals overlap, so neither is
+   shown to be better. (An earlier draft of this finding said the provided vectors scored *below*
+   ours; that over-claimed a ranking the data does not support.)
 
 > [!important] U7 was a correctness check, and it did not come out as designed
 > Phase 3 D1 predicted the provided vectors *should* beat ours, and said explicitly: **"if ours
@@ -198,6 +207,156 @@ Four results worth stating:
 > **The check that would separate these is running `danish_probe()` against the provided vectors**,
 > which is not yet done. Until then this row is reported as unresolved, not as a finding that our
 > encoder is better.
+
+### F44 — Calibrated against the challenge's own baselines: we are at the "most clicks" level
+The RecSys 2024 Challenge paper (arXiv 2409.20483) publishes official reference points for EB-NeRD:
+
+| System | AUC |
+|---|---|
+| :D (1st) — transformers + GBDT, 3-stage, time-aware features | **89.24** |
+| BlackPearl (2nd) — hierarchical long/short-term interest modelling | 88.15 |
+| Tom3TK (3rd) — GBDT ensemble with **article timeliness** features | 87.07 |
+| **Most-clicks editorial baseline** | **59.70** |
+| Read-time baseline | 59.49 |
+| In-view-rate baseline | 54.50 |
+| Random | 49.98 |
+
+**Our MIND fusion scored 0.5934 — essentially level with the "most clicks" baseline (0.5970)**,
+above in-view-rate and well above random.
+
+> [!warning] This is an analogy, not a like-for-like comparison
+> Those baselines are **EB-NeRD**; our 0.5934 is **MIND**. Different corpus, different slate sizes,
+> different scorer. It is a useful order-of-magnitude calibration and nothing more. The classmate
+> cluster on the EB-NeRD board (0.43–0.60) suggests the two scales behave similarly, which is why
+> the comparison is worth making at all.
+
+**What the winners did, and why the gap is not closable here.** All three top teams used GBDT
+ensembles and/or transformers in multi-stage pipelines with engineered temporal features — i.e. a
+**re-ranker**, which is explicitly Component-2. The 0.59 → 0.87 gap is a different class of system,
+not a better-tuned candidate generator. F23 measured the entire BM25 parameter space as worth ~0.01;
+this gap is ~0.28.
+
+> [!important] Two of our findings are independently confirmed by the winners
+> - *"Ablation studies confirmed that features capturing article popularity significantly impacted
+>   performance"* — matches F25/F39, where popularity beat BM25 outright on MIND at every K.
+> - Tom3TK *"integrates article timeliness features"*; the paper stresses *"the time-sensitive
+>   relevance of news articles"* — matches F16/F41, where recency dominated everything and the
+>   window peaked at 24h.
+>
+> The challenge winners independently identified recency and popularity as the load-bearing signals.
+> That is meaningful validation of the analysis even though our absolute scores are far lower — we
+> found the right levers and stopped at the point where the next lever is a re-ranker.
+
+**No answer key exists.** The test labels are held by the organisers, which is precisely why the
+leaderboard is the only external check available — and why F42's offline/leaderboard disagreement
+matters so much.
+
+### F45 — The ablation script dropped its own confidence intervals
+`src/eval/ablations.py` built each result row as
+`{..., **{m: rec[m][0] for m in rec}, "ci50": ...}`. The `**` spread ran **after** the `ci50` key was
+set and overwrote it, so `results/ablations_ebnerd.json` stored point estimates with `ci50: null`.
+
+*Consequence:* every "inside the CI" claim in the first write-up of F43 was **asserted from memory
+of the console output, not read from the saved data**. The conclusions happened to survive when the
+intervals were recovered from the log — but that was luck, not method, and it is the same class of
+error as the coverage-CI bug: a number that looks complete and is not.
+
+*Also corrected in F43:* the provided-BERT row was described as scoring *below* our MiniLM. Their
+intervals overlap (0.0013 [0.0000, 0.0037] vs 0.0037 [0.0000, 0.0088]), so the honest statement is
+**indistinguishable**. The original wording claimed a ranking the data does not support.
+
+*Fix:* every metric's CI is now stored under a `ci` key alongside the point estimates, and the
+ablations were re-run so the artefact matches what was reported.
+
+> [!warning] The ablations sit in a weak measurement regime, and it is worth saying so
+> Every recall figure in F43 is **below 0.008** — this is full-corpus semantic retrieval, which F16
+> showed is close to hopeless on EB-NeRD without the recency window. Comparing numbers that are all
+> nearly zero, at n=800, resolves very little. The ablations should have been run *inside* the 24h
+> window where the retrievers actually work. Their conclusions are therefore weak evidence of "no
+> detectable effect", not evidence of "no effect".
+
+### F46 — Re-tested every overlapping comparison with a paired bootstrap; two claims were wrong
+Prompted by the observation that "do the CIs overlap?" is a **conservative approximation, not the
+test**. Two marginal intervals can overlap while the difference is significant, because both
+retrievers are scored on the *same* impressions and that shared noise cancels when you subtract.
+`bootstrap.paired_difference_ci()` now does it properly.
+
+Audited every comparison reported with overlapping CIs. Paired results:
+
+| Comparison | Point gap | Paired diff, 95% CI | Differ on | Verdict |
+|---|---|---|---|---|
+| MIND fusion vs bm25, nDCG@10 | +0.0015 | +0.0033 [−0.0029, +0.0105] | **55/800** | not significant |
+| MIND fusion vs bm25, recall@100 | +0.0039 | +0.0047 [−0.0021, +0.0118] | 11/800 | not significant |
+| EB-NeRD semantic vs bm25, nDCG@10 | **+0.0061** | **−0.0055** [−0.0277, +0.0155] | **470/800** | not significant, and **sign flips** |
+| EB-NeRD semantic vs bm25, MRR | +0.0061 | −0.0057 [−0.0312, +0.0202] | 515/800 | not significant |
+| O5 dedup on/off, recall@50 | +0.0025 | +0.0025 [−0.0025, +0.0075] | **4/800** | not significant |
+
+**Two corrections to previously reported claims:**
+
+1. **The design note said semantic "edges ahead on ranking" on EB-NeRD** (nDCG@10 0.4750 vs 0.4689).
+   The paired difference is **−0.0055** — the sign is *negative*. The marginal point estimates
+   favoured semantic; the paired test does not. Corrected in `report/a1_design_note.tex`.
+2. **F43's dedup conclusion was right but for an unstated reason.** The two configurations produce
+   different results on only **4 of 800** impressions, because dedup only bites when a user's recent
+   titles repeat a term — rare at `last_n=15`. The experiment was underpowered by construction, not
+   merely inconclusive.
+
+> [!important] "Differ on n/800" separates two very different null results
+> A non-significant result means either *no effect* or *no power to see one*, and the count
+> distinguishes them:
+>
+> - **dedup: 4/800** — nothing to measure. No statistical method could resolve this.
+> - **EB-NeRD semantic vs lexical: 470/800** — abundant signal, genuinely equal performance. This is
+>   a real finding: the two retrieval families disagree constantly and score the same.
+>
+> Every future null result in this project reports that count alongside the CI.
+
+**And the sharpest consequence, combining with F42.** MIND fusion vs BM25 differed on **55 of 800**
+impressions offline and was not significant — yet on the leaderboard's 2.37M impressions fusion
+scored **+0.0366 AUC**. The offline harness did not merely understate the effect; **it had no power
+to detect it at all**. An offline proxy at n=4,000 can rule out *large* differences and cannot rank
+retrievers whose gaps are this size. That is now the strongest methodological statement the project
+can make about its own evaluation.
+
+### F47 — Truncating the embedding to 256-d is *significantly better* than 384-d, at 34% less memory
+Sweep of embedding dimension inside the 24h window, EB-NeRD, n=800. Truncate the cached 384-d MiniLM
+vectors and re-normalise, so **only the width changes** — same model, same training, same text.
+`results/dim_sweep_ebnerd.json`.
+
+| Dim | Vectors | recall@50 | nDCG@10 | Paired vs 384-d (recall@50) |
+|---|---|---|---|---|
+| 384 | 31.9 MB | 0.2325 [0.2025, 0.2613] | 0.4603 | — |
+| **256** | **21.2 MB** | **0.2500** [0.2206, 0.2806] | 0.4690 | **+0.0175 [+0.0025, +0.0338] SIGNIFICANT** |
+| **128** | **10.6 MB** | 0.2437 [0.2137, 0.2750] | 0.4651 | +0.0112 [−0.0112, +0.0338] — no worse |
+| 64 | 5.3 MB | 0.2175 [0.1888, 0.2494] | 0.4550 | −0.0150 [−0.0425, +0.0150] — degrades |
+
+**256-d beats full width on both recall@50 and nDCG@10 with the paired CI excluding zero**, and
+**128-d is statistically indistinguishable from 384-d at a third of the memory**. The floor sits
+between 128 and 64.
+
+*Why truncation helps rather than merely costing little:* the tail dimensions of a
+non-Matryoshka-trained embedding carry mostly noise for this task. Dropping them removes variance
+without removing signal — the same mechanism that makes PCA often *improve* retrieval rather than
+just compress it.
+
+> [!important] Only the paired test could see this
+> The marginal CIs overlap heavily — 384-d [0.2025, 0.2613] against 256-d [0.2206, 0.2806] — so the
+> overlap heuristic would have called this "undecided" and we would have shipped the larger, worse
+> vector. The paired difference is significant because both configurations are scored on the *same*
+> impressions and that shared noise cancels. **This is the concrete payoff of F46's method change.**
+
+*Consequences:*
+
+1. **Prefer 256-d.** Better quality, 34% less memory, marginally faster search. There is no axis on
+   which 384-d wins.
+2. **128-d is the right choice if memory is tight** — a third of the footprint for no measurable
+   loss, which matters at the large tier where vectors reach 514 MB at 1024-d.
+3. **Dimension is not a proxy for capacity.** F37 already showed XLM-R's 768-d losing to MiniLM's
+   384-d by 348× on the Danish probe; this shows *the same model* improving when narrowed. Both
+   point the same way: **the training objective and the noise floor matter, the width does not.**
+
+*Caveat:* n=800, one dataset, one window. The 256-vs-384 gap is significant but small, and the
+result should be confirmed at a larger sample before being treated as settled.
 
 ## Findings
 

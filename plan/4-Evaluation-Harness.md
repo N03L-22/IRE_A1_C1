@@ -22,6 +22,22 @@ status: done
 > `src/eval/run_all.py` now defaults to **20,000 impressions**, and no retriever decision should
 > be made on less.
 >
+> **D5 gained a second test (F46): `bootstrap.paired_difference_ci()`.** Comparing two marginal
+> intervals for overlap is a *conservative approximation*, not the test — both retrievers are scored
+> on the same impressions, so their shared noise cancels under subtraction. Auditing every
+> overlapping comparison we had reported changed two of them, and the dimension sweep (F47) is
+> significant only under the paired test.
+>
+> **Every null result now reports how many impressions the two systems differ on**, which separates
+> *no effect* from *no power*: dedup differed on 4/800 (unmeasurable), EB-NeRD semantic-vs-lexical on
+> 470/800 (abundant signal, genuinely equal).
+>
+> **The harness's own limit, measured twice (F34, F42, F46).** It put BM25's MIND AUC at 0.4981
+> [0.4776, 0.5190] where the leaderboard scored 0.5568 — outside the interval. It then found fusion
+> vs BM25 *not significant* (differing on 55/800) where the leaderboard scored **+0.0366**. At
+> n=4,000 this harness can rule out large differences and **cannot rank retrievers**; a retriever
+> choice must be validated on the leaderboard.
+>
 > **Final parameters, as run** (chosen on val before test was touched):
 >
 > | | EB-NeRD | MIND |

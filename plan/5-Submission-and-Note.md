@@ -17,6 +17,14 @@ status: in-progress
 >   (F35). Now a named constant with tests guarding both it and the built artefact.
 > - The first EB-NeRD run **crashed on the unlabelled test schema** (F33).
 >
+> **Both leaderboards now have scores.** MIND BM25 **0.5568** (901650), MIND fusion **0.5934**
+> (901779) — a real +0.0366 that the offline harness had no power to see. EB-NeRD submitted.
+>
+> **A format bug caught before it cost a second submission.** The two competitions want archive
+> members whose names differ by one letter — MIND `prediction.txt`, EB-NeRD **`predictions.txt`** —
+> verified against both upstream sources. Submission filenames are now
+> `{dataset}_{retriever}_{paramhash}_i{n}` so no run can overwrite another.
+>
 > **Cohort context:** median AUC 0.6121 across 50 classmate submissions; we are 0.055 below it.
 > The gap is not parameter tuning (measured at ~0.01) — it is the missing popularity signal and
 > the semantic/fusion rows, which are built but not yet scored.

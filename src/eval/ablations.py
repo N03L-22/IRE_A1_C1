@@ -139,9 +139,14 @@ def main() -> int:
         rows = evaluate(retriever, val, hist, articles, "ebnerd",
                         train_popularity=pop, with_slices=False)
         rec = {r.metric: (r.value, r.ci_low, r.ci_high) for r in rows if r.slice == "all"}
+        # Store the CI alongside every metric, not just the point estimate.
+        # The first version spread `{m: rec[m][0]}` over the dict and silently
+        # clobbered a separate "ci50" key, so the intervals were lost and any
+        # "inside the CI" claim had to be read back off the console.
         out.append({"ablation": name, "retriever": retriever.name, "note": note,
                     "index_seconds": round(idx_s, 1),
-                    **{m: rec[m][0] for m in rec}})
+                    **{m: rec[m][0] for m in rec},
+                    "ci": {m: [rec[m][1], rec[m][2]] for m in rec}})
         log.info("  %-34s r@50=%.4f [%.4f,%.4f]  r@200=%.4f  ndcg@10=%.4f  (%.0fs)",
                  name, *rec["recall@50"], rec["recall@200"][0], rec["ndcg@10"][0], idx_s)
 

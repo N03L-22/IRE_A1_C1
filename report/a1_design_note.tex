@@ -105,9 +105,16 @@ RRF fusion & 0.0070 --- \emph{no gain} & \textbf{0.0181} [0.0146, 0.0218] --- \e
 \end{tabular}
 \end{center}
 
-\textbf{On MIND semantic beats lexical and fusion beats both; on EB-NeRD lexical edges ahead and
-fusion helps nothing.} Fusion exploits disagreement: on EB-NeRD the two retrievers agree (CIs
-overlap heavily), so there is nothing to fuse. A single ``which is better'' answer would be wrong.
+\textbf{The point estimates favour semantic on MIND and lexical on EB-NeRD --- but a paired
+bootstrap on the difference finds \emph{neither gap significant}}: MIND fusion vs BM25 nDCG@10
+$+0.0033$ [$-0.0029$, $+0.0105$] (they differ on 55 of 800 impressions); EB-NeRD semantic vs BM25
+$-0.0055$ [$-0.0277$, $+0.0155$] (differing on 470 of 800 --- ample signal, no detectable gap). At
+$n=4{,}000$ the two families are indistinguishable and the apparent flip is not established.
+
+\textbf{The leaderboard disagrees, and that is the finding.} Submitting fusion for MIND scored
+\textbf{AUC 0.5934 against BM25's 0.5568} --- a real $+0.0366$ on 2.37M impressions, an effect the
+offline harness had no power to see. An offline proxy this size can rule out large differences; it
+cannot rank retrievers.
 
 \textbf{The slice tells a sharper story.} EB-NeRD recall@100, cold defined as history $\le$ 97
 (q0.25 of observed; median 235):
@@ -174,6 +181,49 @@ $0.9783\ [0.9035, 0.9235]$ --- \textbf{the point estimate outside its own interv
 without replacement fails at every ratio from 0.5 to 0.99. Reported as a point estimate marked
 \texttt{(no CI)}: saying so beats shipping a plausible-looking number that is biased by construction.
 
+\subsection{Embedding width: 256-d beats 384-d, and 128-d costs nothing \F{F47}}
+
+Dimension is the one semantic knob with a direct resource cost --- memory, index size and search
+time all scale linearly in it. Truncating the cached 384-d MiniLM vectors and re-normalising
+isolates it exactly: same model, same training, only the width changes.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrl@{}}
+\toprule
+Dim & Vectors & recall@50 & Paired difference vs 384-d \\
+\midrule
+384 & 31.9 MB & 0.2325 & --- \\
+\textbf{256} & \textbf{21.2 MB} & \textbf{0.2500} & \textbf{$+0.0175$ [$+0.0025$, $+0.0338$] SIGNIFICANT} \\
+\textbf{128} & \textbf{10.6 MB} & 0.2437 & $+0.0112$ [$-0.0112$, $+0.0338$] --- no worse \\
+64 & 5.3 MB & 0.2175 & $-0.0150$ --- degrades \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{256-d is significantly better than full width at 34\% less memory}, and 128-d is
+indistinguishable from it at a third. The tail dimensions of a non-Matryoshka embedding carry mostly
+noise for this task; dropping them removes variance without removing signal --- the mechanism that
+makes PCA often improve retrieval rather than merely compress it. Combined with \F{F37}, where
+XLM-R's 768-d lost to MiniLM's 384-d by 348$\times$ on the Danish probe: \textbf{the training
+objective and the noise floor decide quality, the width does not}.
+
+\subsection{Overlapping intervals are the wrong test \F{F46}}
+
+``Do the CIs overlap?'' is a conservative approximation. Both retrievers are scored on the
+\emph{same} impressions, so their shared per-impression noise cancels when you subtract --- and a
+paired bootstrap on the \emph{difference} is both the correct test and a much tighter one.
+
+It changed two conclusions. The 384-vs-256 intervals above overlap heavily ([0.2025, 0.2613] against
+[0.2206, 0.2806]) and the overlap heuristic would have called it undecided; the paired test finds it
+significant, so we would have shipped the larger, worse vector. Conversely an earlier draft of this
+note claimed semantic ``edges ahead'' of lexical on EB-NeRD from the point estimates; paired, the
+difference is $-0.0055$ [$-0.0277$, $+0.0155$] --- the sign reverses and nothing is established.
+
+\textbf{Every null result now reports how many impressions the two systems actually differ on},
+because that separates \emph{no effect} from \emph{no power}: the dedup ablation differed on
+\textbf{4 of 800} (unmeasurable by construction), while EB-NeRD semantic-vs-lexical differed on
+\textbf{470 of 800} --- abundant signal, genuinely equal.
+
 \section{Anti-gaming (Q9)}
 
 \textbf{Leakage.} History is truncated to clicks strictly before the impression time.
@@ -216,6 +266,16 @@ its recall-vs-exact gap becomes the thing to report.
 
 MIND submitted: \textbf{AUC 0.5568, MRR 0.2646, nDCG@5 0.2778, nDCG@10 0.3331}. EB-NeRD file
 generated and validated (13,336,711 lines, 100\% valid permutations). \emph{Screenshots overleaf.}
+
+\textbf{Calibration \F{F44}.} The challenge paper (arXiv 2409.20483) publishes reference points for
+EB-NeRD: winners at 89.24 / 88.15 / 87.07 AUC, a \emph{most-clicks} editorial baseline at
+\textbf{59.70}, read-time 59.49, in-view-rate 54.50, random 49.98. Our MIND fusion at 0.5934 sits
+essentially at the most-clicks baseline --- an analogy across datasets, not a like-for-like, but a
+useful order of magnitude. All three winners used GBDT ensembles or transformers in multi-stage
+pipelines with engineered temporal features, i.e.\ a \textbf{re-ranker}: the 0.59$\rightarrow$0.87
+gap is a different class of system, not a better-tuned candidate generator. Notably their ablations
+independently identified \emph{popularity} and \emph{article timeliness} as the load-bearing
+signals --- the same two levers this component found in \F{F16/F41} and \F{F25/F39}.
 
 \textbf{Limitations, stated plainly.} (i)~The offline harness was under-powered: at $n{=}800$ it
 reported MIND AUC 0.4981 [0.4776, 0.5190] while the leaderboard scored \textbf{0.5568} ---

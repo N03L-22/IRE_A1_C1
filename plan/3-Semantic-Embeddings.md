@@ -46,6 +46,28 @@ status: done
 > MIND: mean 2,117 / **recent_half 1,462 / max_pool 270** — 46% falling back against 0.2%. The
 > complexity is justified on MIND and is dead weight on EB-NeRD; report both counts.
 >
+> **D3's rejected options are now measured, not just named.** `MultiQueryRetriever` (cluster the
+> history, retrieve per centroid, RRF-merge) is built and under test — motivated by F40, which found
+> **46% of MIND users falling back** from the mean because their history is incoherent. D3 dismissed
+> it on cost; that measurement changes the cost/benefit it assumed.
+>
+> **D4's dimension question has a clear answer (F47), and it is not the expected one.** Truncating
+> the 384-d vectors *inside the 24h window*:
+>
+> | Dim | Vectors | recall@50 | Paired vs 384-d |
+> |---|---|---|---|
+> | 384 | 31.9 MB | 0.2325 | — |
+> | **256** | **21.2 MB** | **0.2500** | **+0.0175 [+0.0025, +0.0338] SIGNIFICANT** |
+> | 128 | 10.6 MB | 0.2437 | no worse |
+> | 64 | 5.3 MB | 0.2175 | degrades |
+>
+> **256-d beats full width at 34% less memory.** Prefer 256-d; use 128-d if memory is tight.
+>
+> **Correction to an earlier claim in this file.** The as-built block first reported semantic as
+> edging ahead of lexical on EB-NeRD ranking. A *paired* bootstrap gives −0.0055 [−0.0277, +0.0155]
+> — the sign reverses and nothing is established. The two families are indistinguishable at n=4,000,
+> and they differ on 470/800 impressions, so this is genuine equality rather than missing power.
+>
 > **Encoder throughput, measured on the RTX 4060:** length-sorted batching (1.80×) plus
 > pipelined tokenisation (1.27×) plus vector caching = **6,286 art/s**. Larger batches are
 > *slower* — the model is launch-latency bound, and VRAM (0.36 of 8 GB) is not the constraint.

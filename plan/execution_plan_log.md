@@ -1006,6 +1006,64 @@ per-line scaling from MIND, which over-predicted by 2.8×.
 > in progress — the first attempt was killed after the F68 diagnosis, and an unfinished run is not
 > evidence.
 
+### F70 — Workers were each rebuilding the same data: 19.3 GB/worker becomes 0.38 GB
+**The question that found this was "can't the parallel workers access a single space for common
+memory?" — and the answer was yes, they had never been doing so.**
+
+`_init_worker` had every worker independently construct the BM25 index, 125,541 article objects and
+all histories. That data is **identical across workers and never written**. N workers meant N full
+copies, measured at **19.3 GB each** — which is what put 48 GB of RSS on a 31 GB machine and
+thrashed at ~140,000 blocks/s of swap I/O with the CPU 75–100% idle.
+
+**The fix is one property of Linux:** `fork` is copy-on-write, so anything built *before* the pool
+starts is shared until someone writes to it. Scoring only reads. Build once in the parent, fork,
+inherit.
+
+**Measured per worker** (`/proc/PID/smaps_rollup`, which separates what `ps` conflates):
+
+| | |
+|---|---|
+| `Rss` — what `ps` reports | 3.23 GB |
+| `Shared_Dirty` — the single inherited copy, counted once per process | **2.83 GB** |
+| **`Private_Dirty` — the true marginal cost of one more worker** | **0.38 GB** |
+
+**48× less per worker.**
+
+| | before F70 | after F70 |
+|---|---|---|
+| Workers | 2 | **6** |
+| Total system memory | **48 GB requested on a 31 GB box** | **10 GB used, 20 GB free** |
+| CPU | 0–25% (paging, not computing) | **~100% × 6** |
+| Swap I/O | ~140,000 blk/s both directions | **0** |
+| Runtime | thrashed, killed | **1,303.4 s = 22 min** |
+
+> [!important] The columnar work was the *enabler*, not just a saving
+> This cannot be done with Python objects. CPython refcounting **writes** to an object's header
+> every time a child touches it, dirtying the page and forcing a private copy — so a forked child
+> reading 807,677 `History` objects would gradually copy most of them. Contiguous numpy arrays keep
+> their data in one buffer that refcounting never touches, so 116.8M clicks stay in exactly **one
+> physical copy** no matter how many workers read them.
+>
+> So F64/F67's value is larger than the memory number suggested: moving to arrays cut a worker
+> 9.2 → 5.32 GB *and* made sharing possible at all. **The two changes compound**; neither alone gets
+> to 0.38 GB.
+
+**Verified byte-identical.** 13,336,711 lines, `066de46d…`, matching the submitted file — with six
+changes now stacked (columnar histories, int32-second times, streamed row groups, the parent fix,
+fork sharing, 3× the workers). **Not one bit of the submission moved.**
+
+**The full timing ladder, all measured on this machine:**
+
+| Config | Time | |
+|---|---|---|
+| 1 worker / serial | ~99 min | projected from the 3-worker measurement |
+| 2 workers (**what produced the submission**) | ~49 min | projected |
+| 3 workers, columnar | **33 min** | measured |
+| **6 workers, fork-shared** | **22 min** | measured |
+
+`WORKER_INCREMENT_GB = 1.5` against a measured 0.38 GB is **deliberately conservative**: the failure
+mode for underestimating is a thrashed run that looks like a hang (F38), not a clean error.
+
 ## Findings
 
 Numbered so they can be cited from the phase files and the design note.

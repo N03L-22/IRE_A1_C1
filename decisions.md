@@ -739,9 +739,46 @@ degrade but *stops*. One extra worker is not worth a run that can hang.
 
 **MIND is unchanged** — string ids, no click timestamps (F1) — and keeps the original path.
 
-**Still not merged to `main`.** `main` must reproduce the submitted artefacts exactly; that is the
-Q8 claim. The merge decision waits on the queued run showing byte-identical output *and* a real
-timing gain.
+**Merged to `main` on 2026-08-26**, on the evidence below — byte-identical output plus a measured
+4.5× — not on the projection that opened this section.
+
+## The submission path as it now stands (F64–F70)
+
+Four changes, each measured, each gated on producing a **byte-identical** submission:
+
+| # | Change | Effect |
+|---|---|---|
+| F64/F67 | Histories as contiguous numpy arrays, loaded by streaming row groups | load 160 s → 4.6 s; ~13 GB → 0.93 GB |
+| F65 | Click times as int32 seconds (0 of 116.8M have sub-second precision) | times array halved |
+| F68 | Parent no longer loads histories the parallel path never reads | parent 14.5 GB → 1.73 GB |
+| **F70** | **Build shared state once, workers inherit it through `fork`** | **19.3 GB → 0.38 GB per worker** |
+
+**Measured ladder on a 31 GB / 32-core machine:**
+
+| Config | Time |
+|---|---|
+| 2 workers — *what produced the submitted file* | ~49 min |
+| 3 workers, columnar | **33 min** (measured) |
+| **6 workers, fork-shared** | **22 min** (measured) |
+
+> [!important] The real lesson is that the two changes compound
+> F70 — sharing one copy between workers instead of N — **is only possible because of F64/F67.**
+> CPython refcounting writes to an object header whenever a child touches it, dirtying the page and
+> forcing a copy, so forked workers reading Python objects would gradually copy most of them.
+> Contiguous arrays have no per-element bookkeeping, so they stay genuinely shared.
+>
+> Stated as the design claim: **the columnar representation's value was not mainly the 14× memory
+> saving — it was making inter-process sharing possible at all.** That was not the reason it was
+> built, and it is worth saying so plainly rather than claiming foresight.
+
+**Correctness, unchanged throughout.** `History.before()` is untouched; every fast path is a
+*duplicate* pinned to it by a differential test on real users (the F36 rule). That discipline caught
+F65's boundary bug — flooring a sub-second cutoff dropped a click at exactly that second, on real
+user 40107 — which a fixture test would have missed entirely.
+
+**What did not change:** MIND. String article ids, no click timestamps (F1), TSV-backed so no row
+groups and no parallel path. It keeps the original code and reproduces byte-identically on it
+(`ba275ef0…`, 2,282.4 s against a 2,287.9 s baseline).
 
 ---
 

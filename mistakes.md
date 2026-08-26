@@ -376,6 +376,39 @@ correctness input — not just an efficiency one.
 
 ---
 
+## 15. Passing `--allow-swap` on the argument that swap was safe here
+
+**Where:** the EB-NeRD reproduction run, my own command line
+
+**What it did.** The preflight refused 2 workers, saying they would swap. I overrode it with
+`--allow-swap`, reasoning that scoring streams parquet row groups sequentially, and sequential access
+under swap costs a constant factor rather than stalling — the distinction bug 3 established.
+
+**Why that was wrong.** The reasoning was right about the *row groups* and wrong about everything
+else in a worker. Each scored impression also hits the **BM25 index and the article dictionary at
+random**, and those are gigabytes. Random access against swap is the exact pattern bug 3 says does
+not degrade but **stops**. I applied a true fact about one data structure to a process dominated by
+another.
+
+**What it cost.** Parent 9.6 GB plus two workers at 19.3 GB each — **~48 GB of RSS on a 31 GB
+machine**, 13.1 GB into swap and climbing, `si/so` at ~140,000 blocks/s in both directions, all 32
+cores 75–100% idle. The machine was doing nothing but paging.
+
+**What caught it.** The user sending a system-monitor screenshot: memory 98.2%, swap climbing, CPU
+flat near zero. I had been reporting the run as healthy.
+
+**The fix, and the better answer.** Killed it. The real problem was never swap tolerance — it was
+that six copies of identical read-only data existed at all. F70 (build once, share through `fork`)
+took a worker from 19.3 GB to 0.38 GB private, after which 6 workers fit in 10 GB with **zero** swap
+I/O and the run finished in 22 minutes.
+
+**Transferable lesson:** *an override exists because the check knows something you might not.* The
+preflight was measuring the actual requirement; I was reasoning from a model of it. When a guard
+says no and you can construct an argument for why it is wrong, the argument is the thing to check —
+and reaching for the override is a signal to fix the underlying cost instead.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |

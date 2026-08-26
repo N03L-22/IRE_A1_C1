@@ -197,6 +197,54 @@ not just measured.
 **4 · Delivery (Q5, Q6)** — Formats predictions for the two Codabench leaderboards and turns your
 choices into the ≤4-page design note. Not an afterthought: the note is where most of the marks are.
 
+## The submission path — how 13.3M impressions get scored
+
+Distinct enough from the retrieval architecture to describe separately: `src/submit/codabench.py`
+turns a retriever into a leaderboard file, and its constraints are about **memory**, not ranking.
+
+**Scoring, in one sentence:** for each impression, take the user's clicks strictly *before* that
+impression's timestamp, paste those headlines into a query, score the ~11 candidates on the slate,
+sort, write the ranking. EB-NeRD runs that loop **13,336,711 times**.
+
+```mermaid
+flowchart TD
+    subgraph PARENT["Parent process — builds the shared state ONCE"]
+        A["articles.parquet<br>125,541 articles"] --> IDX["BM25 index"]
+        H["history.parquet<br>807,677 users · 116.8M clicks"] --> COL["ColumnarHistories<br>flat int32 arrays · 0.93 GB"]
+    end
+    PARENT -->|"fork — copy-on-write"| W1["worker 1"]
+    PARENT -->|"fork"| W2["worker 2"]
+    PARENT -->|"fork"| WN["worker N<br>private cost 0.38 GB each"]
+    W1 --> SH["one shard per parquet row group"]
+    W2 --> SH
+    WN --> SH
+    SH -->|"workers exit FIRST"| MRG["merge · dedup · write"]
+    MRG --> OUT["prediction.txt → zip"]
+    style COL fill:#e6f4ea,stroke:#34a853,color:#000
+    style MRG fill:#fef7e0,stroke:#f9ab00,color:#000
+```
+
+**Read it as:** the expensive, immutable structures are built once and *inherited* rather than
+rebuilt per worker — which is what makes the worker count a free parameter instead of a memory
+ceiling.
+
+Three design points, each earned by a failure rather than chosen up front:
+
+| Decision | Why | Found by |
+|---|---|---|
+| Histories as flat int32 arrays, not Python objects | ~13 GB → 0.93 GB, load 160 s → 4.6 s | F60, F64 |
+| Shared state built in the parent, inherited via `fork` | 19.3 GB → **0.38 GB** private per worker | F70 |
+| **Merge runs only after every worker exits** | The merge hits a 13.3M-element set at *random*; under memory pressure that does not slow down, it **stops** | F38 |
+
+> [!warning] `ps` overstates a forked worker by ~8×
+> A worker shows 3.23 GB of RSS but only **0.38 GB is private** — RSS counts every shared page once
+> per process. Sizing a run from RSS is what produced a request for 48 GB on a 31 GB machine. Use
+> `Private_Dirty` from `/proc/PID/smaps_rollup`.
+
+**MIND does not take this path.** Its behaviours are TSV, so there are no row groups to parallelise
+over, and it has no click timestamps (F1). It runs the serial path with the original history
+objects, and reproduces byte-identically on it.
+
 ## Detailed architecture
 
 ```mermaid

@@ -830,3 +830,7 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 05:02 · `0df5ffb1`
 
 > can we still use polar and gpu and find a work around for q9?
+
+### 2026-08-26 05:30 · `0df5ffb1`
+
+> test complete main and verify the resulting score locally matches? check ebnerd and mind. eta for both?

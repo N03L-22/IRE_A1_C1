@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Ten defects, all in `mistakes.md` with full detail. **Nine of ten did not crash** — every one
+Twelve defects, all in `mistakes.md` with full detail. **Eleven of twelve did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -872,3 +872,6 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 12:17 · `0df5ffb1`
 
 > but will there be a time reduction in this single serial path?
+### 2026-08-26 05:30 · `0df5ffb1`
+
+> test complete main and verify the resulting score locally matches? check ebnerd and mind. eta for both?

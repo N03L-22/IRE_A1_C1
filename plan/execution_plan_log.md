@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F63.**
+> **One day to the 2026-08-27 deadline. Findings F1–F66.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -1064,6 +1064,139 @@ fork sharing, 3× the workers). **Not one bit of the submission moved.**
 `WORKER_INCREMENT_GB = 1.5` against a measured 0.38 GB is **deliberately conservative**: the failure
 mode for underestimating is a thrashed run that looks like a hang (F38), not a clean error.
 
+### F64 — The Q9 workaround: duplicate the boundary, don't move it. 34.9× load, −52% RAM
+F62 found the opportunity (columnar histories) and F60 named the blocker (`t < cutoff` **is** the Q9
+leakage boundary). **Both were right, and the blocker was smaller than stated** — because the
+codebase already contains the pattern that solves it.
+
+**The workaround.** `History.before()` is not modified at all. `ColumnarHistories.before()`
+(`src/data/columnar.py`) is a *second* implementation, pinned to the original by a differential
+test — which is precisely what F36 did for the worker path with `CompactHistories.texts_before()`.
+The boundary has been safely duplicated once already; this is the same move one level up.
+
+> [!important] Why duplicating is safer than migrating here
+> Migrating means every caller — `harness.py`, `split.py`, `skeleton.py`, `test_no_leakage.py` —
+> changes at once, and Q9's correctness surface moves with them. Duplicating means the original
+> stays untouched and authoritative, and the copy has to *prove* equality on real data. If they
+> ever diverge the test fails; if I had migrated, divergence would be invisible.
+
+**Measured at full EB-NeRD test scale** (807,677 users, 116,825,984 clicks):
+
+| | Python objects | Columnar | |
+|---|---|---|---|
+| **Load** | **160.05 s** | **4.58 s** | **34.9× faster** |
+| **Peak RSS** | 13.91 GB | **6.61 GB** | **−52%** |
+| Click storage | ~13 GB | **1.40 GB** | −89% |
+| `before()` throughput | 136,782/s | **251,148/s** | **1.8× faster** |
+
+The truncation speedup is a side effect worth naming: times are ascending per user, so truncation
+becomes `searchsorted` — **O(log k) instead of O(k)** over a ~160-click history.
+
+> [!warning] Two numbers I quoted earlier were microbenchmarks, and the real loader is worse
+> F62 reported "0.35 s and 0.47 GB, ~450× faster". That was `explode().to_numpy()` **alone**. The
+> working loader also builds offsets, converts the timestamp column, and maps user ids to rows —
+> none of which the microbenchmark included. Real figures: **4.58 s, 1.40 GB, 34.9×.**
+>
+> Still a 155-second saving per run and half the peak memory, but **a microbenchmark of one call is
+> not the cost of the feature it belongs to** — the same error as F59, at smaller scale. Both
+> numbers are kept here so the gap is visible.
+
+**Correctness — what the tests actually assert** (`tests/test_columnar.py`, 6 tests):
+
+- **Agreement with `History.before()` on real EB-NeRD users**, 300 users × probes at *each click
+  time and ±1 µs either side* — the boundary is probed where it is easy to get wrong, not at
+  random cutoffs. >500 comparisons, exact match required.
+- **`<` not `<=`**: a click at *exactly* impression time must be excluded. Getting this wrong leaks
+  one click per user — small enough to pass a smoke test, large enough to move a metric.
+- **Click times really are ascending** — asserted directly on 5,000 real users rather than inferred
+  from the differential test passing. `searchsorted` on unsorted input returns a wrong truncation
+  *silently*, so the precondition is verified, not assumed.
+- **MIND's no-timestamp case** returns everything, matching `History.before()` (F1).
+- **Misaligned parallel arrays raise**, in `__init__` rather than the loader — a click paired with
+  another click's time makes every truncation wrong without raising anything.
+
+Also pinned `explode(empty_as_null=True)`: it is the current Polars default and **2.0 flips it**. A
+user with no clicks must explode to nothing, not to a null row, or every downstream offset shifts by
+one — a silent off-by-one across the whole corpus.
+
+**Status: built, tested, and deliberately not wired into the submission path for C-1.** The gain is
+~2.5 min and ~7 GB on a run that is not currently blocked by either, one day from the deadline. What
+this changes versus F60/F62 is the *reason*: it is no longer "too risky to attempt" but "verified
+and available, adopted in C-2", with the differential test already written. → `mistakes.md` bug 11.
+
+### F65 — Second-resolution timestamps: −34% memory, and a boundary bug the real-data test caught
+Narrowing the stored times from int64 microseconds to **int32 seconds**, because measurement showed
+**0 of 116,825,984 EB-NeRD clicks carry sub-second precision** — every timestamp is a whole second.
+Times were the largest array in the object (0.93 GB vs the ids' 0.47 GB), so halving them is the
+single biggest lever available.
+
+| | before | after |
+|---|---|---|
+| Click arrays | 1.40 GB | **0.93 GB** (−34%) |
+| Offsets | int64, 6.5 MB | int32, 3.2 MB |
+| Load | 4.58 s | 5.56 s (the `.all()` verification pass) |
+| `before()` | 251,148/s | 179,780/s |
+
+> [!warning] It introduced a real leak, and the differential test on real data found it
+> `np.datetime64(cutoff, "s")` **floors toward the past**. For a cutoff of `07:51:01.000001` it
+> yields `07:51:01`, and `<` then **drops a click at exactly `07:51:01`** — a click that is
+> genuinely before the cutoff. Real EB-NeRD user 40107 failed with `0 vs 1 clicks`.
+>
+> **The fix is the ceiling, not the floor:** every stored time is a whole second, so anything
+> strictly before `07:51:01.000001` is at `07:51:01` or earlier — i.e. strictly before `07:51:02`.
+> `cut = -((-us) // 1_000_000)`.
+>
+> **This is the value of the F36 pattern, demonstrated.** A fixture test with whole-second cutoffs
+> passes either way; the bug only appears at sub-second cutoffs against real timestamps. Had the
+> boundary been *migrated* rather than *duplicated and pinned*, this would have silently dropped one
+> click per affected user in the submission — a leak in the opposite direction from the usual, and
+> invisible to every existing check.
+
+The throughput regression is the correct trade: correctness bought with arithmetic, still 1.3×
+faster than the object path. Both numbers recorded rather than quoting only the better one.
+`tests/test_columnar.py` now has 7 tests, including one that pins the sub-second cutoff case
+directly.
+
+### F66 — Setup does not parallelise: it is CPU-bound inside a library that already uses the cores
+With 32 cores, 25 GB free and an idle GPU, the natural move is to run the setup phases concurrently.
+**Measured: it buys nothing.**
+
+| | time |
+|---|---|
+| Load histories + behaviors **sequentially** | 2.95 s |
+| Load them **concurrently** (2 threads, independent files) | 2.91 s — **1.02×** |
+| `POLARS_MAX_THREADS` 1 / 4 / 16 / 32 | 3.02 / 2.93 / 2.86 / 2.92 s — **flat** |
+
+**Why**, measured rather than assumed:
+
+| | |
+|---|---|
+| Raw file read (page cache) | 0.16 s → **7.2 GB/s** |
+| Single-thread memory bandwidth | **21.2 GB/s** |
+| Parquet decode | 3.04 s → **0.8 GB/s** of materialised data |
+
+Decode is **19× the cost of the disk read**, so this is not I/O-bound — it is CPU-bound on
+decompression. But Polars **already parallelises decode internally across the threadpool**, so
+wrapping it in more threads just contends for cores it is using. The flat `POLARS_MAX_THREADS`
+curve says the work is bounded by memory bandwidth per row group, not by core count.
+
+> [!important] Spare capacity is not a speedup
+> 32 cores, 25 GB and an 8 GB GPU sitting idle look like unused headroom, but **none of the
+> remaining setup cost is shaped to consume them**: parquet decode is already multithreaded, object
+> allocation is serialised by the interpreter, and the impression stream is bounded by sequential
+> I/O. The GPU cannot help at all — there is no arithmetic here, only memory movement.
+>
+> **The 28.8× already achieved came from doing less work, not from using more hardware.** That is
+> the general shape: after F59 (GPU, 1.6×) and F66 (threads, 1.02×), every real gain in this
+> component came from eliminating work — F32's slate scoring (16×), F36's int arrays (+45%),
+> F64's columnar load (28.8×) — and none from adding parallelism to work that was already
+> saturating its resource.
+
+**Where the spare hardware *is* usable** — and both are already measured, not speculative:
+`build_predictions_parallel` scales across processes (F36: 2 workers fit in 23.1 GB, ~61 min → ~30
+min), and F63's MinHash uses the GPU at 200,788 docs/s because it is genuinely dense arithmetic.
+With histories now at 0.93 GB instead of ~13 GB, **more workers fit** — which is the real way the
+extra RAM converts into wall-clock, and it is a submission-path change, not a setup one.
 ## Findings
 
 Numbered so they can be cited from the phase files and the design note.

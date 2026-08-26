@@ -23,6 +23,7 @@ import argparse
 import gc
 import json
 import logging
+import os
 import time
 import zipfile
 from concurrent.futures import ProcessPoolExecutor
@@ -61,6 +62,19 @@ SUBMISSION_MEMBER = {
 #: (1.8 GB) plus CompactHistories over 807,677 users (~7.4 GB). Was 15.1 GB
 #: before the int-array change. Used to clamp --n-jobs before a run starts.
 WORKER_GB = 9.5
+#: With ColumnarTexts (F67) an EB-NeRD worker is 5.32 GB rather than ~9.2 GB.
+#: MEASURED, not derived: a first estimate of 2.9 GB (articles + the 0.93 GB of
+#: click arrays) was wrong by 2.8x, because peak RSS is set by peak *allocation*
+#: during the load, not by the size of what survives it. Rounded up to 5.6 for
+#: headroom -- a worker that does not fit does not fail loudly, it swaps, and a
+#: swapping run looks exactly like a hang (F38).
+WORKER_GB_COLUMNAR = 5.6
+
+#: Marginal cost of one more worker when the shared state is inherited through
+#: fork (F70). Not another full copy -- just the child's own scratch: the
+#: per-row-group buffers and the scored-slate dicts it builds and drops. Kept
+#: deliberately generous; the failure mode for underestimating is a thrash.
+WORKER_INCREMENT_GB = 1.5
 
 #: Left free for the single-threaded merge, which builds a set over 13.3M
 #: impression ids after the workers exit.
@@ -332,6 +346,31 @@ class CompactHistories:
 _WORKER_KIND = "bm25"
 
 
+def _init_worker_shared() -> None:
+    """Adopt state the parent already built, inherited through fork() (F70).
+
+    ``_init_worker`` has every worker build its own copy of data that is
+    identical and never written: the BM25 index, 125,541 article objects, and
+    all 807,677 histories. Three workers meant three copies -- measured at
+    19.3 GB each, which is what put 48 GB of RSS on a 31 GB machine and
+    thrashed.
+
+    On Linux ``fork`` is copy-on-write, so anything built *before* the pool
+    starts is shared until written to. Scoring only reads, so it stays shared:
+    measured, three children reading 0.96 GB of parent numpy arrays added
+    **0.00 GB** rather than 2.88 GB.
+
+    This works because F64/F67 moved histories to contiguous numpy arrays.
+    Python objects would defeat it -- refcounting writes to every object header
+    a child touches, dirtying the page and copying it. Arrays keep their data
+    in one buffer that refcounting never touches, so the 116.8M clicks stay in
+    exactly one physical copy.
+    """
+    global _WORKER
+    if _WORKER is None:  # pragma: no cover - the parent always sets it
+        raise RuntimeError("_PREFORK not populated before the pool started")
+
+
 def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str,
                  retriever_kind: str = "bm25") -> None:
     global _WORKER, _WORKER_KIND
@@ -346,7 +385,28 @@ def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str,
     retriever.index(list(articles.values()))
 
     texts_by_id = {aid: a.retrieval_text for aid, a in articles.items()}
-    histories = CompactHistories(reader.histories(test_split), texts_by_id)
+    # F67: load histories columnar where the dataset allows it. Same
+    # texts_before() interface, pinned to CompactHistories by
+    # test_columnar_texts_matches_compact_histories -- so this is a speed and
+    # memory change, never a behaviour change.
+    #
+    # EB-NeRD only: its ids are numeric and it has click timestamps. MIND's
+    # ids are strings ("N12345") with no timestamps (F1), so it keeps the
+    # original path rather than having a second encoding guessed for it.
+    histories = None
+    if dataset == "ebnerd":
+        try:
+            from ..data.columnar import ColumnarTexts
+            hist_path = reader._split_dir(test_split) / "history.parquet"
+            histories = ColumnarTexts(hist_path, texts_by_id)
+            log.info("worker: columnar histories (%d users)", len(histories))
+        except Exception as e:  # noqa: BLE001
+            # Never fail the run over an optimisation; fall back to the path
+            # that produced every submitted file.
+            log.warning("columnar histories unavailable (%s); using CompactHistories", e)
+            histories = None
+    if histories is None:
+        histories = CompactHistories(reader.histories(test_split), texts_by_id)
 
     _WORKER = {
         "reader": reader,
@@ -412,20 +472,38 @@ def build_predictions_parallel(
     # (15.1 GB before it). Starting more workers than fit does not fail
     # loudly; it swaps, and a swapping run looks exactly like a hang. Clamp
     # here rather than discovering it 40 minutes in.
+    import multiprocessing as _mp
+
+    # Decided before the preflight, because it changes how much memory a
+    # worker costs (F70): with fork the shared state exists once, without it
+    # every worker rebuilds its own copy.
+    can_fork = hasattr(os, "fork") and _mp.get_start_method(allow_none=True) in (None, "fork")
+
     available_gb = psutil.virtual_memory().available / (1024 ** 3)
-    fits = max(1, int((available_gb - MERGE_HEADROOM_GB) // WORKER_GB))
+    # EB-NeRD workers use ColumnarTexts (F67), so they are ~2.9 GB rather than
+    # ~9.5 GB and many more fit. Measured, not assumed: F64 put the click
+    # arrays at 0.93 GB against ~7.4 GB of Python objects.
+    worker_gb = WORKER_GB_COLUMNAR if dataset == "ebnerd" else WORKER_GB
+    # Under fork-sharing (F70) the big structures exist once and the workers
+    # inherit them read-only, so an extra worker costs its own scratch space
+    # rather than another full copy. Budget the shared set once, then a small
+    # per-worker increment.
+    if can_fork:
+        fits = max(1, int((available_gb - MERGE_HEADROOM_GB - worker_gb) // WORKER_INCREMENT_GB) + 1)
+    else:
+        fits = max(1, int((available_gb - MERGE_HEADROOM_GB) // worker_gb))
     if fits < n_jobs:
         if allow_swap:
             log.warning(
                 "%.1f GB available: %d workers x %.1f GB will use swap. "
                 "Proceeding because --allow-swap was passed.",
-                available_gb, n_jobs, WORKER_GB,
+                available_gb, n_jobs, worker_gb,
             )
         else:
             log.warning(
                 "%.1f GB available: %d workers x %.1f GB would swap. Using %d. "
                 "Pass --allow-swap to override.",
-                available_gb, n_jobs, WORKER_GB, fits,
+                available_gb, n_jobs, worker_gb, fits,
             )
             n_jobs = fits
     log.info(
@@ -446,11 +524,24 @@ def build_predictions_parallel(
     # `with` kept two workers resident holding 13.6 GB and 10.9 GB while the
     # single-threaded merge tried to allocate a 13.3M-element set -- which put
     # 24 GB into swap and hung a run whose shards were already complete.
-    pool = ProcessPoolExecutor(
-        max_workers=min(n_jobs, n_groups),
-        initializer=_init_worker,
-        initargs=(dataset, tier, str(work_dir), test_split, retriever_kind),
-    )
+    # Build the shared, read-only state ONCE here, then let fork() share it
+    # (F70). Falls back to per-worker construction on any platform without a
+    # real fork, where each child would have to rebuild anyway.
+    if can_fork:
+        _init_worker(dataset, tier, str(work_dir), test_split, retriever_kind)
+        log.info("shared state built once in the parent; workers inherit it via fork")
+        ctx = _mp.get_context("fork")
+        pool = ProcessPoolExecutor(
+            max_workers=min(n_jobs, n_groups),
+            initializer=_init_worker_shared,
+            mp_context=ctx,
+        )
+    else:
+        pool = ProcessPoolExecutor(
+            max_workers=min(n_jobs, n_groups),
+            initializer=_init_worker,
+            initargs=(dataset, tier, str(work_dir), test_split, retriever_kind),
+        )
     try:
         for rg_idx, shard, n, c in pool.map(_predict_row_group, tasks):
             shards[rg_idx] = shard
@@ -578,9 +669,24 @@ def main(argv: list[str] | None = None) -> int:
         articles = {a.article_id: a for a in reader.articles()}
     log.info("articles     %8d  (%.1fs)", len(articles), time.perf_counter() - t0)
 
-    t0 = time.perf_counter()
-    histories = {h.user_id: h for h in reader.histories(test_split)}
-    log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
+    # Only the SERIAL path uses these. build_predictions_parallel builds its
+    # own per-worker histories in _init_worker, so loading them here is dead
+    # weight on the parallel path -- and expensive dead weight: measured at
+    # ~14.5 GB of Python objects for EB-NeRD's 807,677 users / 116.8M clicks
+    # (F60: 158.6 s to build).
+    #
+    # Worse, the parent holds it for the whole run, so the preflight sees far
+    # less free memory than the machine really has and clamps the worker count
+    # accordingly. On a 31 GB box that turned "3 workers" into "1 worker, and
+    # 36 GB requested against 31 GB of RAM" (F68).
+    will_parallelise = hasattr(reader, "impressions_row_group") and budget.n_jobs > 1
+    histories = {}
+    if not will_parallelise:
+        t0 = time.perf_counter()
+        histories = {h.user_id: h for h in reader.histories(test_split)}
+        log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
+    else:
+        log.info("histories    (skipped -- workers build their own)")
 
     params = BEST[args.dataset]
     run_params = {
@@ -605,7 +711,7 @@ def main(argv: list[str] | None = None) -> int:
     stem = submission_stem(args.dataset, args.retriever, run_params, args.out_dir)
     log.info("submission stem: %s", stem)
     txt = args.out_dir / f"{stem}_prediction.txt"
-    if hasattr(reader, "impressions_row_group") and budget.n_jobs > 1:
+    if will_parallelise:
         # Parquet-backed readers expose row groups, the natural unit of
         # parallelism. MIND is TSV and has none, so it takes the serial path.
         stats = build_predictions_parallel(

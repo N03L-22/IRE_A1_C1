@@ -610,9 +610,24 @@ def main(argv: list[str] | None = None) -> int:
         articles = {a.article_id: a for a in reader.articles()}
     log.info("articles     %8d  (%.1fs)", len(articles), time.perf_counter() - t0)
 
-    t0 = time.perf_counter()
-    histories = {h.user_id: h for h in reader.histories(test_split)}
-    log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
+    # Only the SERIAL path uses these. build_predictions_parallel builds its
+    # own per-worker histories in _init_worker, so loading them here is dead
+    # weight on the parallel path -- and expensive dead weight: measured at
+    # ~14.5 GB of Python objects for EB-NeRD's 807,677 users / 116.8M clicks
+    # (F60: 158.6 s to build).
+    #
+    # Worse, the parent holds it for the whole run, so the preflight sees far
+    # less free memory than the machine really has and clamps the worker count
+    # accordingly. On a 31 GB box that turned "3 workers" into "1 worker, and
+    # 36 GB requested against 31 GB of RAM" (F68).
+    will_parallelise = hasattr(reader, "impressions_row_group") and budget.n_jobs > 1
+    histories = {}
+    if not will_parallelise:
+        t0 = time.perf_counter()
+        histories = {h.user_id: h for h in reader.histories(test_split)}
+        log.info("histories    %8d  (%.1fs)", len(histories), time.perf_counter() - t0)
+    else:
+        log.info("histories    (skipped -- workers build their own)")
 
     params = BEST[args.dataset]
     run_params = {
@@ -637,7 +652,7 @@ def main(argv: list[str] | None = None) -> int:
     stem = submission_stem(args.dataset, args.retriever, run_params, args.out_dir)
     log.info("submission stem: %s", stem)
     txt = args.out_dir / f"{stem}_prediction.txt"
-    if hasattr(reader, "impressions_row_group") and budget.n_jobs > 1:
+    if will_parallelise:
         # Parquet-backed readers expose row groups, the natural unit of
         # parallelism. MIND is TSV and has none, so it takes the serial path.
         stats = build_predictions_parallel(

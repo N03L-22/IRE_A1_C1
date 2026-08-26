@@ -830,3 +830,19 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 05:02 · `0df5ffb1`
 
 > can we still use polar and gpu and find a work around for q9?
+
+### 2026-08-26 05:36 · `0df5ffb1`
+
+> run ebnerd after mind finishes.
+
+### 2026-08-26 05:38 · `0df5ffb1`
+
+> 2 workers were determined due to the RAM usage ri8? why not 4 since ram usage is drastically reduced?
+
+### 2026-08-26 05:42 · `0df5ffb1`
+
+> we can restart the mind. since the data we are expecting to receive wont make much differece?
+
+### 2026-08-26 05:53 · `0df5ffb1`
+
+> update the plan docs with F67 findings, also why not 4, instead of 3?

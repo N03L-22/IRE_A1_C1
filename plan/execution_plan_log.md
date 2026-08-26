@@ -881,6 +881,131 @@ deduplicating improves recall, nDCG, or leaderboard AUC; 3.31% is an upper bound
 move. Deciding that needs a paired run, which belongs with the C-2 re-ranker where diversity is the
 explicit objective. Recorded as a measured corpus property, not a result.
 
+### F67 — Wiring the columnar loader into the workers: 9.2 → 5.32 GB, and why that buys 3 workers not 6
+F64 built `ColumnarHistories` and F66 recorded that spare hardware only helps work shaped to use it.
+**Neither noticed that `ColumnarHistories` was called by nothing** — it was a tested library with no
+caller, so merging it would have changed zero runtime behaviour. `ColumnarTexts` closes that: it
+adapts the columnar store to the exact `texts_before()` signature the worker loop already uses, so
+`codabench.py` changes at one line.
+
+**EB-NeRD only.** Its article ids are numeric and it has click timestamps. MIND's ids are strings
+(`N12345`) with no timestamps (F1), so it keeps the `CompactHistories` path rather than having an
+encoding guessed for it. Any failure falls back to the original — an optimisation must never fail
+the run.
+
+| | GB/worker | workers that fit in 22.8 GB |
+|---|---|---|
+| `CompactHistories` (F36, what shipped) | 9.2 | **2** |
+| `ColumnarTexts`, first attempt | 8.06 | 2 |
+| **`ColumnarTexts` + row-group streaming** | **5.32** | **3** |
+
+> [!warning] Two measurement errors on the way, both bug 9's pattern again
+> **1. I predicted 2.9 GB/worker; it measured 8.06 — wrong by 2.8×.** The 0.93 GB of click arrays
+> was right, but a worker also holds 125,541 article objects and the BM25 index (1.8 GB together).
+> I optimised one component and quoted its size as the whole worker's. The constant feeds the
+> preflight clamp, so shipping the guess would have started workers that do not fit — and per F38,
+> that does not fail loudly, it swaps.
+>
+> **2. Peak RSS is set by peak *allocation*, not by what survives it.** The one-shot
+> `explode().to_numpy()` peaks at **4.93 GB to produce 0.94 GB of arrays**, and `del df` returns
+> **none** of it — glibc keeps freed pages. Streaming the 9 row groups never reaches that peak:
+> **4.93 → 2.85 GB**, taking the worker from 8.06 to 5.32 GB.
+>
+> The second is the more useful lesson: *`sys.getsizeof` of the result tells you nothing about the
+> footprint of producing it.* F62's "0.47 GB of arrays" was true and did not predict a worker.
+
+**Why 3 workers and not 4 — the arithmetic, since 4 was the obvious ask:**
+
+```
+available            22.8 GB   (MIND run still holding ~2 GB)
+merge headroom      − 3.0 GB
+budget              = 19.8 GB
+
+3 × 5.6 = 16.8 GB   fits
+4 × 5.6 = 22.4 GB   over by 2.6 GB
+```
+
+Not a rounding artefact: at the **raw measured 5.32 GB with no headroom at all**, 4 workers still
+need 21.3 GB against a 19.8 GB budget — over by 1.5 GB. And 4 workers plus headroom is 25.4 GB
+against the ~24.8 GB that frees once MIND exits, so it misses by ~0.6 GB even on an idle machine.
+
+> [!important] The headroom is the one number not to shave, and the clamp is stricter than physics
+> `MERGE_HEADROOM_GB = 3.0` covers a `set[int]` over 13.3M impression ids. **F38 is precisely the
+> finding that says do not trim it:** the merge hits a large set at *random*, where swap is ~5 orders
+> of magnitude slower than RAM — it does not degrade, it stops. Trading it for a fourth worker
+> trades a ~1.3× scoring gain against a run that can hang.
+>
+> Worth noting the clamp is nonetheless **conservative by construction**: `pool.shutdown(wait=True)`
+> (line 468, the F38 fix) means workers exit *before* the merge allocates, so the true requirement is
+> `max(n × W, H)`, not `n × W + H`. Under that model 4 workers fit. **It is deliberately not
+> changed** — the preflight's job is to refuse runs that might swap, and being pessimistic there
+> costs one worker while being optimistic costs a stalled 90-minute run. If 4 is wanted later, the
+> honest route is measuring a 4-worker run with `--allow-swap` and recording what actually happens,
+> not relaxing the model on paper.
+
+**Expected gain: ~1.5×, not 3×.** Two workers → three is a 50% increase in scoring parallelism; the
+serial phases (setup, merge, writing 13.3M lines) do not move. This is stated before the run rather
+than after, per the rule earned in F59.
+
+**Correctness gate.** `test_columnar_texts_matches_compact_histories` pins `ColumnarTexts` to
+`CompactHistories` on **200 real EB-NeRD users** at real cutoffs, including a corpus with 20% of
+clicked ids deliberately absent so both must drop unknown articles identically. The queued run also
+**diffs its output against the `main` run byte-for-byte**: a memory optimisation that changes the
+submission is a bug, not an optimisation. 8 tests pass.
+
+### F68 — The parent held 14.5 GB the parallel path never used, and it was the real worker limit
+The first EB-NeRD reproduction ran **15 minutes at 95% idle CPU with no output**. Not a stall in the
+F38 sense (`si/so` were zero, so nothing was thrashing) — it was starved.
+
+**The bug.** `build_predictions_parallel` builds per-worker histories in `_init_worker`. The parent
+loaded **all 807,677 users / 116,825,984 clicks (~14.5 GB, ~158 s)** regardless, then never touched
+them on that path — only the serial branch takes `histories` as an argument.
+
+**The cost was not the waste, it was the knock-on.** The parent holds that memory for the whole run,
+so the preflight saw a machine with far less free RAM than it had and clamped accordingly:
+
+| | before the fix | after |
+|---|---|---|
+| Parent RSS | **14.5 GB** | **1.73 GB** |
+| Workers started | **1** (clamped from 3) | **3** |
+| Worker RSS | 21.9 GB | **3.3–3.4 GB** each |
+| Total footprint | **~36 GB requested on a 31 GB box** | **~13 GB** |
+
+> [!important] Steady state is not peak, in the useful direction this time
+> F67 measured 5.32 GB/worker at *peak* during load; steady-state workers sit at **3.3–3.4 GB**. So
+> the F67 arithmetic that concluded "3 workers, not 4" was correct for the peak but conservative for
+> the run. With F68 also freeing the parent's 14.5 GB, **4–5 workers now look feasible** — but that
+> is explicitly *not* claimed until measured, because estimating this number is exactly what went
+> wrong three times today (bugs 9, 11, 13).
+
+### F69 — The whole optimisation stack is byte-neutral: 33 min, identical output
+The branch run — columnar histories (F64), int32-second timestamps (F65), streamed row groups
+(F67), the parent fix (F68), 3 workers instead of 2 — against the **submitted** EB-NeRD file:
+
+```
+branch     066de46d3cdeb73bcdf527dbe36f0f6c6d9d053ab01d80524fe9dcd92db82fa7
+submitted  066de46d3cdeb73bcdf527dbe36f0f6c6d9d053ab01d80524fe9dcd92db82fa7
+```
+
+**13,336,711 lines, 523.9 MB, 1,978.9 s (33 min), 0 cold slates — and byte-for-byte identical.**
+
+This is the result the whole branch was gated on. Five changes to memory layout, timestamp
+precision, I/O strategy and process count, and **not one bit of the submission moved.** A
+performance change that alters the output is a bug; this proves these are not.
+
+It also closes the ETA question F59 left open. Earlier projections ranged 30–91 min with a 3×
+spread; measured: **33 min**, at the low end — consistent with F36's ~30 min and *not* with the
+per-line scaling from MIND, which over-predicted by 2.8×.
+
+> [!warning] Two reproductions, two different meanings
+> **MIND** reproduced on `main` (`ba275ef0…`, 2,282.4 s vs a 2,287.9 s baseline) — that is the **Q8
+> reproducibility claim**: the repo regenerates the artefact that scored 0.5938.
+>
+> **EB-NeRD** here reproduced on the *branch*, which proves the optimisations are behaviour-neutral
+> but does **not** by itself establish that `main` reproduces it. That needs a `main` run, which is
+> in progress — the first attempt was killed after the F68 diagnosis, and an unfinished run is not
+> evidence.
+
 ## Findings
 
 Numbered so they can be cited from the phase files and the design note.

@@ -717,6 +717,32 @@ and the "bigger dataset benefits more" intuition was already wrong once.
 > F59 and F60 made that mistake in consecutive findings, in opposite directions. Measure the
 > specific step.
 
+## What was actually adopted, and where it sits (F67)
+
+The columnar loader is now **wired into the EB-NeRD submission workers** on `polars-gpu` —
+`ColumnarTexts` adapts it to the `texts_before()` signature `codabench.py` already calls, so the
+change is one line and behaviour is pinned by a differential test against `CompactHistories` on 200
+real users.
+
+| | GB/worker | workers fitting 22.8 GB |
+|---|---|---|
+| `CompactHistories` (F36, what shipped) | 9.2 | 2 |
+| **`ColumnarTexts` + row-group streaming** | **5.32** | **3** |
+
+**Expected ~1.5× on the scoring phase**, stated before the run per F59's rule. Not 3×: the serial
+phases — setup, merge, writing 13.3M lines — do not move.
+
+**Why 3 and not 4.** `4 × 5.6 + 3.0 = 25.4 GB` against ~24.8 GB free on an idle machine. Even at the
+raw 5.32 GB with zero headroom it needs 21.3 GB against a 19.8 GB budget. The `MERGE_HEADROOM_GB`
+is the one number not to trade: F38 showed the merge hits a large set at random, where swap does not
+degrade but *stops*. One extra worker is not worth a run that can hang.
+
+**MIND is unchanged** — string ids, no click timestamps (F1) — and keeps the original path.
+
+**Still not merged to `main`.** `main` must reproduce the submitted artefacts exactly; that is the
+Q8 claim. The merge decision waits on the queued run showing byte-identical output *and* a real
+timing gain.
+
 ---
 
 # Part 5 · The earlier decision record (merged from architecture.md Part D)

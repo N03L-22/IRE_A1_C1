@@ -317,6 +317,65 @@ believe it changes**, not the step its name suggests.
 
 ---
 
+## 13. Sizing a worker from the one component I had optimised
+
+**Where:** `WORKER_GB_COLUMNAR` in `src/submit/codabench.py`
+
+**What it did.** After measuring the columnar click arrays at 0.93 GB, I set the per-worker memory
+constant to **2.9 GB**. Measured: **8.06 GB** — wrong by 2.8×.
+
+**Why.** A worker holds more than histories: 125,541 article objects and the BM25 index, ~1.8 GB
+together. I had measured the piece I changed and treated it as the whole.
+
+**Why it mattered more than a wrong number.** That constant feeds the *preflight clamp* that decides
+how many workers start. Too low, and it starts workers that do not fit — which per bug 3 does not
+fail loudly, it swaps, and a swapping merge stalls rather than slows.
+
+**What caught it.** Running one real worker and printing its RSS before trusting the constant.
+
+**The second, more useful finding.** Chasing the gap showed peak RSS is set by peak *allocation*,
+not by what survives: the one-shot `explode().to_numpy()` peaks at **4.93 GB to produce 0.94 GB of
+arrays**, and `del df` returns **none** of it — glibc keeps freed pages. Streaming the 9 row groups
+never reaches that peak: **4.93 → 2.85 GB**, worker **8.06 → 5.32 GB**.
+
+**Transferable lesson:** *the size of a result says nothing about the footprint of producing it.*
+F62's "0.47 GB of arrays" was accurate and did not predict a worker. When a number will gate a
+resource decision, measure the thing that consumes the resource — not the artefact it leaves behind.
+
+---
+
+## 14. Loading 14.5 GB the code path never reads
+
+**Where:** `src/submit/codabench.py`, the parent process before `build_predictions_parallel`
+
+**What it did.** The parent loaded every EB-NeRD history — 807,677 users, 116,825,984 clicks,
+**~14.5 GB of Python objects, ~158 s** — and then passed them only to the *serial* branch.
+`build_predictions_parallel` builds its own per-worker copies in `_init_worker` and takes no
+`histories` argument at all. On EB-NeRD, which always parallelises, the parent's copy was never read.
+
+**Why nobody noticed.** It produced correct output. Wasted work that returns the right answer is
+invisible to every test, and the line reads perfectly sensibly in isolation — you have to notice that
+the *branch below it* doesn't use the variable.
+
+**The part that actually hurt.** The parent holds that 14.5 GB for the entire run, so the preflight
+measured a machine with far less free memory than it had and clamped **3 workers down to 1** — and
+the survivor then requested parent + worker ≈ **36 GB on a 31 GB box**. The run went 15 minutes at
+95% idle CPU with no output.
+
+**What caught it.** The user saying "ebnerd didn't start". It had started 15 minutes earlier; the
+symptom was that it was producing nothing. Reading `/proc/*/status` showed a 14.5 GB parent next to a
+21.9 GB worker, and `vmstat` showed `si/so` at zero — so it was not swapping (bug 3), it was starved.
+
+**The fix.** Load histories only on the serial path. Parent RSS 14.5 GB → **1.73 GB**, workers 1 → 3,
+total footprint ~36 GB → **~13 GB**.
+
+**Transferable lesson:** *dead weight is invisible when it is correct.* Every test passed, the output
+was byte-perfect, and the cost showed up only as a resource decision made on bad information. When a
+preflight reads free memory to size a run, anything the process is needlessly holding becomes a
+correctness input — not just an efficiency one.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |

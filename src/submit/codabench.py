@@ -61,6 +61,13 @@ SUBMISSION_MEMBER = {
 #: (1.8 GB) plus CompactHistories over 807,677 users (~7.4 GB). Was 15.1 GB
 #: before the int-array change. Used to clamp --n-jobs before a run starts.
 WORKER_GB = 9.5
+#: With ColumnarTexts (F67) an EB-NeRD worker is 5.32 GB rather than ~9.2 GB.
+#: MEASURED, not derived: a first estimate of 2.9 GB (articles + the 0.93 GB of
+#: click arrays) was wrong by 2.8x, because peak RSS is set by peak *allocation*
+#: during the load, not by the size of what survives it. Rounded up to 5.6 for
+#: headroom -- a worker that does not fit does not fail loudly, it swaps, and a
+#: swapping run looks exactly like a hang (F38).
+WORKER_GB_COLUMNAR = 5.6
 
 #: Left free for the single-threaded merge, which builds a set over 13.3M
 #: impression ids after the workers exit.
@@ -346,7 +353,28 @@ def _init_worker(dataset: str, tier: str, work_dir: str, test_split: str,
     retriever.index(list(articles.values()))
 
     texts_by_id = {aid: a.retrieval_text for aid, a in articles.items()}
-    histories = CompactHistories(reader.histories(test_split), texts_by_id)
+    # F67: load histories columnar where the dataset allows it. Same
+    # texts_before() interface, pinned to CompactHistories by
+    # test_columnar_texts_matches_compact_histories -- so this is a speed and
+    # memory change, never a behaviour change.
+    #
+    # EB-NeRD only: its ids are numeric and it has click timestamps. MIND's
+    # ids are strings ("N12345") with no timestamps (F1), so it keeps the
+    # original path rather than having a second encoding guessed for it.
+    histories = None
+    if dataset == "ebnerd":
+        try:
+            from ..data.columnar import ColumnarTexts
+            hist_path = reader._split_dir(test_split) / "history.parquet"
+            histories = ColumnarTexts(hist_path, texts_by_id)
+            log.info("worker: columnar histories (%d users)", len(histories))
+        except Exception as e:  # noqa: BLE001
+            # Never fail the run over an optimisation; fall back to the path
+            # that produced every submitted file.
+            log.warning("columnar histories unavailable (%s); using CompactHistories", e)
+            histories = None
+    if histories is None:
+        histories = CompactHistories(reader.histories(test_split), texts_by_id)
 
     _WORKER = {
         "reader": reader,
@@ -413,19 +441,23 @@ def build_predictions_parallel(
     # loudly; it swaps, and a swapping run looks exactly like a hang. Clamp
     # here rather than discovering it 40 minutes in.
     available_gb = psutil.virtual_memory().available / (1024 ** 3)
-    fits = max(1, int((available_gb - MERGE_HEADROOM_GB) // WORKER_GB))
+    # EB-NeRD workers use ColumnarTexts (F67), so they are ~2.9 GB rather than
+    # ~9.5 GB and many more fit. Measured, not assumed: F64 put the click
+    # arrays at 0.93 GB against ~7.4 GB of Python objects.
+    worker_gb = WORKER_GB_COLUMNAR if dataset == "ebnerd" else WORKER_GB
+    fits = max(1, int((available_gb - MERGE_HEADROOM_GB) // worker_gb))
     if fits < n_jobs:
         if allow_swap:
             log.warning(
                 "%.1f GB available: %d workers x %.1f GB will use swap. "
                 "Proceeding because --allow-swap was passed.",
-                available_gb, n_jobs, WORKER_GB,
+                available_gb, n_jobs, worker_gb,
             )
         else:
             log.warning(
                 "%.1f GB available: %d workers x %.1f GB would swap. Using %d. "
                 "Pass --allow-swap to override.",
-                available_gb, n_jobs, WORKER_GB, fits,
+                available_gb, n_jobs, worker_gb, fits,
             )
             n_jobs = fits
     log.info(

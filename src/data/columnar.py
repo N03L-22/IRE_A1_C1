@@ -113,49 +113,60 @@ class ColumnarHistories:
         ``with_times=False`` is the MIND case (F1: no click timestamps), where
         ``History.before()`` returns everything and so must this.
         """
-        import polars as pl
+        import pyarrow.parquet as pq
 
-        df = pl.read_parquet(path)
-        cols = df.columns
-        id_col = next(c for c in cols if "article_id" in c)
-        user_col = next(c for c in cols if "user" in c)
+        # Stream row groups rather than exploding the whole column at once.
+        # Measured: the one-shot path peaks at 4.93 GB RSS to produce 0.94 GB
+        # of arrays, and `del df` does not give it back -- glibc keeps freed
+        # pages. Streaming 9 row groups peaks at 2.85 GB for the same result.
+        # Peak allocation is what sets a worker's footprint, so this is the
+        # difference between 2 workers fitting and 6 (F67).
+        f = pq.ParquetFile(str(path))
+        names = f.schema_arrow.names
+        id_col = next(c for c in names if "article_id" in c)
+        user_col = next(c for c in names if "user" in c)
+        time_col = next((c for c in names if "time" in c), None) if with_times else None
+        cols = [c for c in (user_col, id_col, time_col) if c]
 
-        lens = df[id_col].list.len().fill_null(0).to_numpy()
-        # int64 for the cumsum (no overflow during accumulation), then narrowed:
-        # the final offset is 116,825,984, comfortably inside int32.
+        id_parts, len_parts, user_parts, time_parts = [], [], [], []
+        for g in range(f.metadata.num_row_groups):
+            tb = f.read_row_group(g, columns=cols)
+            lists = tb.column(id_col).combine_chunks()
+            len_parts.append(np.asarray(lists.value_lengths(), dtype=np.int64))
+            id_parts.append(
+                lists.flatten().to_numpy(zero_copy_only=False).astype(np.int32, copy=False)
+            )
+            user_parts.append(tb.column(user_col).to_numpy())
+            if time_col is not None:
+                tt = tb.column(time_col).combine_chunks().flatten().to_numpy(zero_copy_only=False)
+                time_parts.append(tt.astype("datetime64[us]").astype(np.int64))
+                del tt
+            del tb, lists
+
+        flat_ids = np.concatenate(id_parts) if id_parts else np.empty(0, np.int32)
+        del id_parts
+        user_ids = np.concatenate(user_parts) if user_parts else np.empty(0, np.int64)
+        del user_parts
+        lens = np.concatenate(len_parts) if len_parts else np.empty(0, np.int64)
+        del len_parts
+
         offsets = np.zeros(len(lens) + 1, dtype=np.int64)
         np.cumsum(lens, out=offsets[1:])
-        if offsets[-1] < np.iinfo(np.int32).max:
-            offsets = offsets.astype(np.int32)
-        # empty_as_null=True is the current default and Polars 2.0 flips it. Pin it:
-        # an empty click list must explode to nothing, not to a null row, or every
-        # downstream offset shifts by one.
-        flat_ids = (
-            df[id_col].explode(empty_as_null=True).fill_null(0)
-            .to_numpy().astype(np.int32, copy=False)
-        )
-        user_ids = df[user_col].to_numpy()
 
         flat_times, time_unit = None, "us"
-        if with_times:
-            time_col = next((c for c in cols if "time" in c), None)
-            if time_col is not None:
-                t = df[time_col].explode(empty_as_null=True).to_numpy()
-                # datetime64[us] -> int64 microseconds is a reinterpret, not a
-                # conversion: same bytes, integer comparison semantics.
-                us = t.astype("datetime64[us]").astype(np.int64)
-                # Narrow to int32 *seconds* -- halves the largest array in the
-                # object (times are 2x the ids). Only safe because EB-NeRD
-                # records whole seconds: measured, 0 of 116,825,984 clicks carry
-                # sub-second precision. Verified at load time rather than
-                # assumed, because truncating a sub-second click to its second
-                # would move it across a cutoff and change the boundary.
-                if (us % 1_000_000 == 0).all() and abs(us // 1_000_000).max() < np.iinfo(np.int32).max:
-                    flat_times = (us // 1_000_000).astype(np.int32)
-                    time_unit = "s"
-                else:
-                    flat_times = us
-                    time_unit = "us"
+        if time_parts:
+            us = np.concatenate(time_parts)
+            del time_parts
+            # Narrow to int32 *seconds*: times are the largest array, and
+            # measurement shows 0 of 116,825,984 EB-NeRD clicks carry
+            # sub-second precision. Verified rather than assumed -- truncating
+            # a sub-second click to its second would move it across a cutoff.
+            if (us % 1_000_000 == 0).all() and abs(us // 1_000_000).max() < np.iinfo(np.int32).max:
+                flat_times = (us // 1_000_000).astype(np.int32)
+                time_unit = "s"
+            else:
+                flat_times = us
+            del us
 
         log.info(
             "columnar histories: %d users, %d clicks, %.2f GB",
@@ -210,3 +221,59 @@ class ColumnarHistories:
 
     def __contains__(self, user_id: int | str) -> bool:
         return int(user_id) in self._row
+
+
+class ColumnarTexts:
+    """Drop-in for ``CompactHistories``: same ``texts_before`` interface (F67).
+
+    ``CompactHistories`` (F36) already avoids Python string ids by holding
+    ``array('i')`` indices -- 15.08 GB -> 9.25 GB per worker. What it still
+    pays is the *construction*: iterating 807,677 ``History`` objects that the
+    reader materialised from parquet, which F60 measured at 158.6 s and F64
+    replaced with a 4.6 s columnar load.
+
+    This joins the two: load columnar (F64), then expose the exact method the
+    worker loop already calls, so ``codabench.py`` changes by one line.
+
+    > [!important] The interface is texts, not ids
+    > The retrievers take article *text* -- the manufactured-query move. So the
+    > id array is mapped through a shared text table at the end, which is the
+    > one place Python objects are unavoidable. Crucially that cost is
+    > proportional to the *truncated* history (~15 recent clicks), not to all
+    > 116.8M stored clicks.
+    """
+
+    def __init__(self, path: str | Path, texts_by_id: dict[str, str], *, with_times: bool = True) -> None:
+        self._cols = ColumnarHistories.from_parquet(path, with_times=with_times)
+        # Article id -> text, keyed by the int32 ids the columnar store holds.
+        # Ids absent from the corpus map to None and are dropped, matching
+        # CompactHistories' `if a in index` filter.
+        self._text: dict[int, str] = {}
+        for aid, txt in texts_by_id.items():
+            try:
+                self._text[int(aid)] = txt
+            except (TypeError, ValueError):
+                # Non-numeric article ids (MIND's "N12345") never reach this
+                # path -- MIND has no click timestamps, so it uses the
+                # CompactHistories route. Skip rather than guess an encoding.
+                continue
+
+    def texts_before(self, user_id: str, cutoff) -> list[str]:
+        """Retrieval text of clicks strictly before ``cutoff``.
+
+        Signature-compatible with ``CompactHistories.texts_before`` so the two
+        are interchangeable at the call site.
+        """
+        get = self._text.get
+        out = []
+        for aid in self._cols.before(user_id, cutoff):
+            t = get(int(aid))
+            if t is not None:
+                out.append(t)
+        return out
+
+    def __len__(self) -> int:
+        return len(self._cols)
+
+    def __contains__(self, user_id) -> bool:
+        return user_id in self._cols

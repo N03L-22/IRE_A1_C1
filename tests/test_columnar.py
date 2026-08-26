@@ -188,3 +188,69 @@ def test_real_click_times_are_ascending() -> None:
         f"{violations}/5000 users have non-ascending click times -- "
         "searchsorted would return wrong truncations for them"
     )
+
+
+# ---------------------------------------------------------------------------
+# ColumnarTexts -- the drop-in for CompactHistories in the submission path.
+# Same rule as everything else touching the boundary: pinned to the original.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.skipif(not EBNERD.exists(), reason="needs the built EB-NeRD store")
+def test_columnar_texts_matches_compact_histories() -> None:
+    """The two worker-path implementations must return identical text lists.
+
+    `CompactHistories` is what produced every submitted file. If the faster
+    replacement disagrees anywhere, the submission changes -- so agreement is
+    asserted on real users at real cutoffs, not on a fixture.
+    """
+    import polars as pl
+
+    from src.data.columnar import ColumnarTexts
+    from src.data.schema import Article
+    from src.submit.codabench import CompactHistories
+
+    df = pl.read_parquet(EBNERD).head(200)
+    id_col = next(c for c in df.columns if "article_id" in c)
+    t_col = next(c for c in df.columns if "time" in c)
+    u_col = next(c for c in df.columns if "user" in c)
+
+    # A corpus covering the clicks these users actually made, plus a gap: some
+    # clicked ids are deliberately absent, because both implementations must
+    # drop unknown articles the same way.
+    seen: set[int] = set()
+    for ids in df[id_col].to_list():
+        seen.update(int(a) for a in (ids or []))
+    keep = sorted(seen)[: int(len(seen) * 0.8)]
+    texts_by_id = {str(a): f"article {a} text" for a in keep}
+
+    hists = []
+    for row in df.iter_rows(named=True):
+        if not row[id_col]:
+            continue
+        hists.append(
+            type("H", (), {
+                "user_id": str(row[u_col]),
+                "clicked_ids": [str(a) for a in row[id_col]],
+                "times": list(row[t_col]),
+            })()
+        )
+
+    compact = CompactHistories(hists, texts_by_id)
+    columnar = ColumnarTexts(EBNERD, texts_by_id)
+
+    checked = 0
+    for row in df.iter_rows(named=True):
+        times = row[t_col]
+        if not times:
+            continue
+        uid = str(row[u_col])
+        for t in times[:: max(1, len(times) // 6)]:
+            for delta in (timedelta(0), timedelta(microseconds=1)):
+                cutoff = t + delta
+                assert columnar.texts_before(row[u_col], cutoff) == compact.texts_before(uid, cutoff), (
+                    f"ColumnarTexts diverged from CompactHistories for {uid} at {cutoff}"
+                )
+                checked += 1
+
+    assert checked > 200, f"only {checked} comparisons -- too few to be meaningful"

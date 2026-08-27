@@ -1,0 +1,21 @@
+
+=== MIND  val=2000 corpus=65238 ===
+  shipped                    r@100=0.0160  r@200=0.0246  ndcg@10=0.2816
+  F73 only (tau .2 + flat)   r@100=0.0186  r@200=0.0272  ndcg@10=0.2833
+  F74 only (no max_pool)     r@100=0.0172  r@200=0.0252  ndcg@10=0.2819
+  BOTH                       r@100=0.0186  r@200=0.0272  ndcg@10=0.2833
+  paired vs shipped (recall@100):
+    F73 only (tau .2 + flat)   +0.0026 [-0.0011,+0.0070] ns
+    F74 only (no max_pool)     +0.0012 [+0.0000,+0.0027] ns
+    BOTH                       +0.0026 [-0.0011,+0.0070] ns
+
+=== EBNERD  val=2000 corpus=20738 ===
+  shipped                    r@100=0.0070  r@200=0.0160  ndcg@10=0.4374
+  F73 only (tau .2 + flat)   r@100=0.0090  r@200=0.0170  ndcg@10=0.4382
+  F74 only (no max_pool)     r@100=0.0070  r@200=0.0160  ndcg@10=0.4374
+  BOTH                       r@100=0.0090  r@200=0.0170  ndcg@10=0.4382
+  paired vs shipped (recall@100):
+    F73 only (tau .2 + flat)   +0.0020 [-0.0010,+0.0055] ns
+    F74 only (no max_pool)     +0.0000 [+0.0000,+0.0000] ns
+    BOTH                       +0.0020 [-0.0010,+0.0055] ns
+COMBDONE

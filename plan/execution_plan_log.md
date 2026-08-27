@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F72.**
+> **One day to the 2026-08-27 deadline. Findings F1–F75.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -1271,6 +1271,122 @@ there against 46% on MIND) and with the median history lengths (MIND 19, EB-NeRD
 > then measures coherence — the 46% MIND fallback rate (F40) is measured **with decay already
 > applied**. Weighting recent clicks more heavily does not make a genuinely diverse user coherent:
 > a history spanning politics, sport and recipes still averages to three directions.
+
+### F73 — Three semantic knobs were never swept, and three of them were set wrong
+An audit of which parameters appear in any results file as a *varied* quantity found the gap:
+
+| Parameter | Appears in results as a swept variable? |
+|---|---|
+| `last_n` | ✅ 7 files |
+| `tau` | ❌ — appears only inside retriever *name strings* |
+| `decay` | ❌ **never** |
+| `lam` | ❌ **never** |
+
+**Three semantic knobs shipped at their initial guesses.** Swept on MIND val (`src/eval/semsweep.py`,
+raw log `results/semsweep_mind.log`), paired against the shipped default (τ=0.35, log decay, n=20):
+
+| Change | Δ recall@100 | |
+|---|---|---|
+| **`decay=flat`** (no recency weighting at all) | **+0.0051 [+0.0004, +0.0098]** | **SIGNIFICANT** |
+| **`tau=0.20`** (looser) | **+0.0026 [+0.0005, +0.0053]** | **SIGNIFICANT** |
+| category prefixed to the embedded text | +0.0030 [−0.0011, +0.0073] | not significant |
+| `exp` decay, λ=0.3 | −0.0022 | not significant |
+| `tau=0.50` | −0.0056 [−0.0096, −0.0017] | **significantly worse** |
+| `tau=0.65` | −0.0066 [−0.0111, −0.0024] | **significantly worse** |
+| `tau=0.80` | −0.0079 [−0.0128, −0.0034] | **significantly worse** |
+
+**τ is monotonic in the wrong direction from where it shipped:** 0.20 → 0.0146, 0.35 → 0.0119,
+0.50 → 0.0062, 0.65 → 0.0052, 0.80 → 0.0039. Every step tighter is worse, because a stricter
+threshold routes more users into `max_pool` — which F74 shows is the actual liability.
+
+> [!important] The most surprising result: recency decay *hurts* the semantic side on MIND
+> `decay=flat` — weighting every clicked article equally — beats log decay significantly. Recency
+> decay was imported to the semantic path **by analogy with the lexical side and never tested
+> there.** On EB-NeRD recency is the dominant signal (F16: recall@50 0.9050 from ignoring the user
+> entirely); on MIND, which has no publish times at all, weighting recent *clicks* more heavily is
+> just discarding history that carries signal.
+>
+> **The transferable error: a parameter justified by analogy is an untested parameter.** D3 says the
+> semantic decay "matches the lexical decay" — that was the entire justification, and it is not
+> evidence.
+
+*On category (Q1.4 explicitly names it as a feature-store field, and Q3 — unlike Q2.1 — does not
+constrain what text is embedded):* +0.0030 with a CI spanning zero. Directionally positive,
+**not significant**, and consistent with the diagnostic that category is *already* weakly present in
+the embedding (within-category cosine 0.1253 vs across 0.0479, +0.0774 separation).
+
+### F74 — `max_pool` is worse than doing nothing: replace it with the plain mean
+The ladder's last rung is max-pooling, justified in `build_user_vector` as *"a noisy vector that
+points somewhere beats a smooth one pointing at the corpus mean"*. **That was an assumption, and it
+is false.**
+
+Tested on the **1,410 MIND impressions whose user actually reaches `max_pool`** — the only
+population where the rung fires (`src/eval/pooltest.py`):
+
+| Strategy on those users | MRR within slate |
+|---|---|
+| `max_pool` (shipped) | 0.2979 |
+| **plain recency-weighted mean** | **0.3165** |
+| **paired difference** | **+0.0186 [+0.0059, +0.0312] — SIGNIFICANT** |
+
+**Keeping the "meaningless" centroid beats max-pooling**, on exactly the users the fallback exists
+for. The CI excludes zero.
+
+> [!important] Two experiments, one conclusion, reached independently
+> F73's τ sweep found looser thresholds better *without testing pooling at all* — because a looser τ
+> sends fewer users to `max_pool`. F74 tested the rung directly. **Both point the same way, which is
+> what makes this credible rather than a single noisy result.**
+
+*Consequence:* the ladder should be **mean → recent_half → mean** (i.e. drop the third rung), or
+equivalently τ→0.20 with max-pool removed. **Not changed in the shipped code for C-1** — it is the
+deadline, the change would invalidate the byte-identical reproduction just established (F69), and no
+leaderboard slot is available to verify it. Recorded as a measured defect in the design, which is
+worth more than an unverified fix.
+
+> [!warning] The honest caveat on all of F73/F74
+> These are **MIND val at n≈1,200–1,410 impressions**, and F34/F42/F58 established the offline
+> harness disagrees with the leaderboard three times out of three. Effect sizes here (+0.0026 to
+> +0.0186) are the same order as differences that did **not** transfer. Treat as *"the direction is
+> measured, the magnitude is not to be trusted"*.
+
+### F75 — Re-testing F73/F74 at n=2,000 on both datasets: the significance does not survive
+F73 and F74 were each measured on MIND at n≈1,200–1,410 and called significant. **Re-run at
+n=2,000 on both datasets, applied together and separately** (`src/eval/combined.py`, raw log
+`results/semfix_combined.log`), that claim does not hold:
+
+| Config | MIND Δrecall@100 | EB-NeRD Δrecall@100 |
+|---|---|---|
+| F73 (τ=0.20 + flat decay) | +0.0026 [−0.0011, +0.0070] **ns** | +0.0020 [−0.0010, +0.0055] **ns** |
+| F74 (drop `max_pool`) | +0.0012 [+0.0000, +0.0027] **ns** | **+0.0000** (no effect) |
+| **BOTH** | +0.0026 — *identical to F73 alone* | +0.0020 — *identical to F73 alone* |
+
+**Three corrections to what F73/F74 claimed:**
+
+1. **Significance evaporates with more data.** Both were significant at n≈1,200 and are not at
+   n=2,000. A larger sample making an effect *less* significant means the original interval was
+   driven by sample noise — the effect, if real, is smaller than first measured.
+2. **The two fixes are redundant, not additive.** `BOTH` is byte-for-byte the same as `F73 alone` on
+   both datasets, because **τ=0.20 already routes almost nobody into `max_pool`** — so F74 has
+   nothing left to repair once τ is loosened. They are two descriptions of one change.
+3. **F74 does literally nothing on EB-NeRD** (+0.0000 exactly), consistent with F40: 99.9% of
+   EB-NeRD users are coherent at N=20, so the rung never fires there.
+
+> [!important] What still survives, stated at its real strength
+> **The direction is consistent 4 out of 4**: every fixed configuration beats shipped on recall@100
+> *and* recall@200, on *both* datasets. Consistency across independent splits is evidence even when
+> each individual interval spans zero.
+>
+> But the magnitudes are **~0.002**, the same order as F58's 256-d effect that moved the leaderboard
+> by +0.0004 — i.e. within the range this project has already shown does not transfer.
+>
+> **Verdict: a measured design defect worth recording, not a tuning win worth shipping.** The shipped
+> code is unchanged: it is the deadline, changing it would invalidate the byte-identical
+> reproduction (F69), and there is no leaderboard slot available to verify it either way.
+
+*Method note:* this is the correct use of the paired test (F46) — and a reminder that **a
+significant result at one sample size is a hypothesis, not a finding, until it is re-measured at
+another.** F73/F74 are left standing above with their original numbers so the correction is visible
+rather than silently edited away.
 
 ## Findings
 

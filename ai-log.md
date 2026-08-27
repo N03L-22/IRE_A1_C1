@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Sixteen defects, all in `mistakes.md` with full detail. **Fifteen of sixteen did not crash** — every one
+Nineteen defects, all in `mistakes.md` with full detail. **Eighteen of nineteen did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -898,3 +898,15 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-27 20:07 · `0df5ffb1`
 
 > continue investigation, will having dynamic N value for the recent N affect (acceptable) for the centroid issue? N = 20 normally, but when centroid issue, then check only N = 15 or 10?
+
+### 2026-08-27 20:22 · `0df5ffb1`
+
+> we have previously mentioned that ebnerd doesnt have date wise ordering? and we are sorting based on provided data? any way we can bring order to that data? at same time i feel even with mind the value for semantic must have been more than lexical. what could be the issues with the semantic that we arent looking at or exploring. are we deduping and losing on the frequency of similar articles? is the semantic taking care of the category spacee? or should we introduce on our own?
+
+### 2026-08-27 20:45 · `0df5ffb1`
+
+> is the category thing not allowed or mentioned in the pdf?
+
+### 2026-08-27 21:35 · `0df5ffb1`
+
+> test them

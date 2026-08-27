@@ -507,6 +507,107 @@ the signal along with the dominant direction. Centering alone is what worked.
 
 ---
 
+## 17. Three semantic parameters that were never swept, and set wrong
+
+**Where:** `tau`, `decay`, `lam` in `src/retrieval/semantic.py`
+
+**What it did.** The semantic side has more tunable parameters than the lexical side. An audit of
+which ones appear in any results file as a *varied* quantity found that **`tau`, `decay` and `lam`
+never do** — `tau` shows up only inside retriever name strings, which reads like it was swept and
+was not. All three shipped at their initial guesses.
+
+Sweeping them on MIND val, paired against the shipped default:
+
+| Change | Δ recall@100 | |
+|---|---|---|
+| `decay=flat` (no recency weighting) | **+0.0051** [+0.0004, +0.0098] | significant |
+| `tau=0.20` (looser) | **+0.0026** [+0.0005, +0.0053] | significant |
+| `tau=0.80` (stricter) | **−0.0079** [−0.0128, −0.0034] | significantly worse |
+
+**The one that stings.** `decay=flat` — no recency weighting at all — **beats** the shipped log
+decay. Recency decay was added to the semantic path because it "matches the lexical decay" (D3).
+That analogy was the *entire* justification, and it was never tested on the semantic side. On MIND,
+which has no publish timestamps, down-weighting older clicks just discards history that carries
+signal.
+
+**What caught it.** The user asking *"should we have a stricter tau? we should be getting more score
+from the extra semantic params — check if we missed any."* The audit was a one-line grep over
+`results/*.json`; nothing in the code or tests would have flagged it, because a default that is never
+varied looks identical to a default that was chosen.
+
+**Transferable lesson:** *a parameter justified by analogy is an untested parameter.* "It matches the
+lexical side" is a reason to try something, not evidence that it works. And more knobs are not more
+score — three of them were pointed the wrong way, which is worse than not having them.
+
+---
+
+## 18. A fallback strategy that was worse than not falling back
+
+**Where:** `build_user_vector`'s `max_pool` rung, `src/retrieval/semantic.py`
+
+**What it did.** When a user's history is too incoherent for a centroid, the ladder max-pools their
+clicked vectors. The docstring justifies it: *"a noisy vector that points somewhere beats a smooth
+one pointing at the corpus mean."*
+
+**Measured on the 1,410 MIND impressions that actually reach that rung:**
+
+| | MRR within slate |
+|---|---|
+| `max_pool` (shipped) | 0.2979 |
+| plain mean (the thing it replaces) | **0.3165** |
+| paired difference | **+0.0186 [+0.0059, +0.0312]** |
+
+**The "meaningless" centroid beats the fallback designed to replace it**, on exactly the population
+the fallback exists for.
+
+**What caught it.** The user asking directly: *"should we replace max pool with mean pool?"* Two
+independent routes then agreed — the τ sweep already showed looser thresholds scoring better
+(because they route fewer users into `max_pool`), without testing pooling at all.
+
+**Transferable lesson:** *a plausible sentence in a docstring is not a measurement.* That
+justification reads well, survived code review, and was wrong. The rung was added to handle a case,
+and nobody scored the case with and without it — the population it applies to (2–7% of users) was
+small enough that aggregate metrics never revealed the loss.
+
+---
+
+## 19. Calling a result significant before checking it at another sample size
+
+**Where:** F73 and F74, reported an hour before F75 corrected them
+
+**What it did.** Swept the never-tested semantic parameters, found `decay=flat` at
+**+0.0051 [+0.0004, +0.0098]** and dropping `max_pool` at **+0.0186 [+0.0059, +0.0312]**, and wrote
+both up as **SIGNIFICANT** — CI excluding zero, paired test, the correct machinery.
+
+**What was wrong.** Both were measured at **n ≈ 1,200–1,410**. Re-run at **n = 2,000 on both
+datasets**, neither survives: +0.0026 [−0.0011, +0.0070] and +0.0012 [+0.0000, +0.0027]. **More data
+made the effects less significant, not more** — which is the signature of an interval driven by
+sample noise rather than a real effect of that size.
+
+Two further things the re-test exposed that the originals had missed entirely:
+
+- **The two "independent" fixes are the same fix.** Applied together they are byte-for-byte identical
+  to τ=0.20 alone, because a loose τ already routes nobody into `max_pool`. F74 was measuring the
+  tail of F73.
+- **F74 does nothing at all on EB-NeRD** — +0.0000 exactly, because 99.9% of its users never reach
+  that rung (F40). The original only tested MIND.
+
+**What caught it.** The user saying *"test them"* rather than accepting the write-up. Nothing else
+would have — the statistics were computed correctly, the code was right, and the conclusion was
+still wrong.
+
+**Transferable lesson:** *a significant result at one sample size is a hypothesis, not a finding.*
+This project already knew that — bug 8 is the same error, where n=800 put the true value outside its
+own CI. Knowing the lesson did not prevent repeating it, which is worth recording honestly: the
+paired test felt rigorous enough that re-measuring did not seem necessary.
+
+**What survives, stated at its real strength:** the *direction* is consistent 4/4 — every fixed
+configuration beats shipped on two metrics across two datasets. Consistency across independent splits
+is evidence. But ~0.002 is the same magnitude F58 showed does not transfer to a leaderboard, so it is
+recorded as a measured design defect, not shipped as a tuning win.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |

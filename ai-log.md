@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Fifteen defects, all in `mistakes.md` with full detail. **Fourteen of fifteen did not crash** — every one
+Sixteen defects, all in `mistakes.md` with full detail. **Fifteen of sixteen did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -878,3 +878,23 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 14:02 · `0df5ffb1`
 
 > check the open shells once. check the correctness of the entire work once. update the plan docs with the decisions taken. and rthe arch doc with parallel designs considered. make sure the docs reflect the code properly. use foundations for concept, arch for broad level, and plan for in-depth each phase. update the 4page report also. maybe try 2 column design for the design note? also no changes in submissions and dont have to resubmit ri8?
+
+### 2026-08-27 09:08 · `0df5ffb1`
+
+> '/home/noel/Desktop/Obsidian/MTech_CSE/SEM3/Subjects/IRE/Notes/Slides/module-2-queryable-index.pdf' generate the notes as per the existing .md file for notes convention.
+
+### 2026-08-27 15:39 · `0df5ffb1`
+
+> save this in one of the docs.
+
+### 2026-08-27 15:41 · `0df5ffb1`
+
+> check online for the docker for the recsys challenge 2024 for the ebnerd. if its small, we can run it locally and then test the submissions
+
+### 2026-08-27 15:49 · `0df5ffb1`
+
+> https://github.com/jppol-ai/ebnerd-benchmark/tree/main/codabench what does this mean? can i test my local ebnerd submission against this?
+
+### 2026-08-27 20:07 · `0df5ffb1`
+
+> continue investigation, will having dynamic N value for the recent N affect (acceptable) for the centroid issue? N = 20 normally, but when centroid issue, then check only N = 15 or 10?

@@ -473,6 +473,40 @@ what they are compared *against*. When you narrow a type, the invariant to check
 not the storage.
 ---
 
+## 16. A probe that condemned an encoder on the wrong property
+
+**Where:** `danish_probe()` in `src/retrieval/encode.py`, and F37's conclusion
+
+**What it did.** The probe measured `xlm-roberta-base` at margin **+0.0018** between related and
+unrelated Danish pairs and F37 concluded it **"cannot separate related from unrelated"** and
+**"carries no usable retrieval geometry"**. The first clause is true. The second is wrong, and it is
+the one that got quoted in the design note.
+
+**What was actually wrong.** The encoder is **anisotropic** — all its vectors sit in a narrow cone
+around one dominant direction, so every cosine is ~0.99 regardless of content. Subtracting that mean
+direction, one line, takes the margin from **+0.0018 to +0.3875 — a 215× improvement.** With
+truncation as well, it **separates cleanly** (+0.5070 at 128-d). The information was there the whole
+time.
+
+**The part that makes it a real mistake, not just a missed optimisation.** Even at the collapsed
+baseline, **4 of 5 related pairs still ranked in the top 5 by cosine.** Retrieval consumes *ranking*,
+not absolute similarity — so the property the system depends on was largely intact while the property
+the probe measured was destroyed.
+
+**What caught it.** The user pushing back: *"the fact that XLM-R and MiniLM were not having good
+related/unrelated values is bugging me — check deeper."* Nothing internal would have; the probe was
+reporting its number correctly and the conclusion had already been written down as settled.
+
+**Transferable lesson:** *verify the property you depend on, not the one that is easy to measure.*
+This is bug 6 in a new costume — there I checked ranking agreement instead of absolute BM25 scores
+and got it right; here I measured absolute cosine separation and drew a conclusion about retrieval
+usability. **A smoke test can prove something unusable only if it tests the thing you use.**
+
+Also worth recording: **whitening, the textbook fix for anisotropy, failed** (+0.0020). It removes
+the signal along with the dominant direction. Centering alone is what worked.
+
+---
+
 ## What the failures have in common
 
 | Bug | Crashed? | Caught by |

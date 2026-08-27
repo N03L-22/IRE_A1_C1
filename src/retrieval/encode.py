@@ -77,6 +77,16 @@ MODELS = {
 #: 348x larger margin from HALF the dimensions, because it is trained so that
 #: cosine similarity means something.
 #:
+#: CORRECTED BY F71 (2026-08-27): "no usable retrieval geometry" is too strong.
+#: The collapse is anisotropy and it is fixable -- subtracting the mean
+#: direction takes the margin +0.0018 -> +0.3875 (215x), and with 128-d
+#: truncation XLM-R separates cleanly at +0.5070. More tellingly, even at the
+#: collapsed baseline 4/5 related pairs still RANK in the top 5, and retrieval
+#: consumes ranking rather than absolute similarity. MiniLM still wins on both
+#: axes (+0.6270, 5/5) so the shipped choice is unchanged -- but the probe
+#: tested magnitude while the system depends on order. Centering is a missing
+#: fourth mitigation alongside mean-pool/L2/probe; one line, flagged for C-2.
+#:
 #: xlmr-base stays in MODELS as the brief-named ablation row: reporting it as
 #: a measured failure is a stronger result than quietly not running it.
 DEFAULT_MODEL = "minilm"

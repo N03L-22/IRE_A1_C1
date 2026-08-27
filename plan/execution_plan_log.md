@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F70.**
+> **One day to the 2026-08-27 deadline. Findings F1–F72.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -1197,6 +1197,81 @@ curve says the work is bounded by memory bandwidth per row group, not by core co
 min), and F63's MinHash uses the GPU at 200,788 docs/s because it is genuinely dense arithmetic.
 With histories now at 0.93 GB instead of ~13 GB, **more workers fit** — which is the real way the
 extra RAM converts into wall-clock, and it is a submission-path change, not a setup one.
+### F71 — XLM-R's collapse is anisotropy and it is *fixable*: F37's verdict was too strong
+F37 measured `xlm-roberta-base` at margin **+0.0018** on the Danish probe and concluded it "carries no
+usable retrieval geometry". **The measurement was right; the conclusion overreached.** Four
+hypotheses, tested separately (`src/eval/probe_deep.py`):
+
+| Treatment | related | unrelated | **margin** | |
+|---|---|---|---|---|
+| baseline, 768-d mean-pool + L2 | 0.9972 | 0.9954 | **+0.0018** | overlaps |
+| **H1 · centered** (subtract the mean direction) | 0.2003 | −0.1871 | **+0.3875** | overlaps |
+| H1b · whitened | −0.0749 | −0.0769 | +0.0020 | overlaps |
+| H3 · truncated 256-d | 0.8321 | 0.7037 | +0.1284 | overlaps |
+| **H3+H1 · 256-d + centered** | 0.2891 | −0.1771 | **+0.4662** | **SEPARATES** |
+| **H3+H1 · 128-d + centered** | 0.3162 | −0.1908 | **+0.5070** | **SEPARATES** |
+| H3+H1 · 64-d + centered | 0.3464 | −0.1668 | +0.5132 | SEPARATES |
+
+**H1 is the whole story: one mean-subtraction is a 215× margin improvement.** The information was
+always present — a single dominant direction was drowning it. Truncation helps *independently*
+(+0.0018 → +0.1667 at 128-d raw), because the anisotropic junk concentrates in some dimensions.
+
+> [!important] H4 is the finding that should change how the probe is read
+> Even at the collapsed baseline, **4 of 5 related pairs still rank in the top 5 by cosine.** The
+> *ranking* was largely intact while the absolute cosines were meaningless — and retrieval consumes
+> ranking, not absolute similarity. So "unusable" was the wrong word: **a probe that measures
+> absolute separation can condemn an encoder whose ranking is serviceable.**
+>
+> This is the same class of mistake as F32/bug 6: *verify the property you depend on.* We depend on
+> order; the probe tested magnitude.
+
+**What does not change.** MiniLM still wins everywhere — **+0.6270 at baseline against XLM-R's best
++0.5132**, and 5/5 rather than 4/5 on ranking. The shipped choice stands. And whitening **fails**
+(+0.0020): it destroys the signal along with the anisotropy, which is worth recording because it is
+the textbook fix and it does not work here.
+
+> [!warning] The honest limits of this result
+> **n = 5 pairs.** This is a smoke test, not a benchmark — it can prove an encoder unusable, and it
+> cannot prove one good. No retrieval metric was run on centered XLM-R vectors, so **no claim is made
+> that centering would improve recall**; only that the probe's verdict was too strong.
+
+*Consequence for the mitigation list:* `encode.py` names three mitigations — mean-pool, L2-normalise,
+run the probe. **Centering is a missing fourth**, and it is one line. Not adopted for C-1 (the shipped
+encoder does not need it), flagged for C-2.
+
+### F72 — A graded-N ladder rescues 2/3 of MIND's max-pool users; EB-NeRD never needed it
+`build_user_vector` currently steps **n → n/2 → max_pool**. The proposal tested here is a *graded*
+ladder — on incoherence try N = 20, 15, 10, 5, 3 in turn — which differs materially for long
+histories (for a 40-click user, `recent_half` is still 20 clicks).
+
+Measured on 3,885 MIND and 4,000 EB-NeRD users with ≥2 clicks (`src/eval/ladder.py`):
+
+| | current ladder | graded ladder |
+|---|---|---|
+| **MIND** — reaches a real centroid | 93.2% | **97.8%** |
+| MIND — falls to `max_pool` | **6.8%** (266 users) | **2.2%** (87 users) |
+| **EB-NeRD** — reaches a real centroid | 100.0% | 100.0% |
+
+**179 MIND users rescued from the noisy fallback — a 67% reduction.** The graded ladder's landings
+are spread (N=20 15.8%, N=15 15.4%, N=10 31.8%, N=5 26.6%, N=3 8.2%), which is the evidence that the
+extra rungs do real work rather than duplicating `recent_half`.
+
+EB-NeRD is unaffected: **96.9% are coherent at N=20 outright**, consistent with F40 (0.2% fallback
+there against 46% on MIND) and with the median history lengths (MIND 19, EB-NeRD 92).
+
+> [!warning] Bounded upside, and not yet measured end to end
+> This changes the strategy for **2.2–6.8% of users**, so the aggregate recall effect is bounded by
+> that fraction even if every rescue helps. **No retrieval metric was run on the graded ladder** —
+> per F46, an experiment that can only move a few hundred impressions may not be resolvable at all,
+> and claiming an improvement without measuring it is exactly what this project does not do.
+
+> [!important] The premise that prompted this needs correcting
+> The suggestion came with *"we have recency decay, so the meaningless-centroid problem doesn't
+> occur."* **Decay does not prevent it.** `build_user_vector` applies recency weighting *first* and
+> then measures coherence — the 46% MIND fallback rate (F40) is measured **with decay already
+> applied**. Weighting recent clicks more heavily does not make a genuinely diverse user coherent:
+> a history spanning politics, sport and recipes still averages to three directions.
+
 ## Findings
 
 Numbered so they can be cited from the phase files and the design note.

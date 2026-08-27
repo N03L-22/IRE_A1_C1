@@ -135,7 +135,7 @@ clicks, word overlap has too few terms to work with while embeddings still place
 somewhere meaningful. CIs overlap, so this is suggestive, not established --- but the crossover is
 the shape, and it is what Q3.5 asks for.
 
-\subsection{XLM-RoBERTa cannot separate related from unrelated Danish \F{F37}}
+\subsection{XLM-RoBERTa's collapse is anisotropy --- and it is fixable \F{F37,F71}}
 
 The brief names BERT/XLM-RoBERTa. Before trusting either, a probe embedded 5 obviously-related
 Danish headline pairs and 5 obviously-unrelated ones:
@@ -153,10 +153,24 @@ MiniLM (384-d) & 0.6523 & 0.0253 & \textbf{+0.6271} & SEPARATES \\
 
 XLM-R rates \emph{``Brøndby beat FCK''} and \emph{``a new apple cake recipe''} as 0.995 similar. It
 is trained for masked-language modelling, not to make cosine similarity meaningful, and its vectors
-collapse into a narrow cone. \textbf{A retriever built on it returns arbitrary articles while
-producing perfectly plausible metrics} --- the failure mode this probe exists to catch. MiniLM
-achieves a 348$\times$ larger margin from \emph{half} the dimensions. Reported as a measured failure
-rather than a silent substitution.
+collapse into a narrow cone. MiniLM achieves a 348$\times$ larger margin from \emph{half} the
+dimensions, so it ships; XLM-R is reported as a measured failure rather than a silent substitution.
+
+\textbf{But ``cannot separate'' was too strong a conclusion, and finding the limit of our own claim
+is the more useful result \F{F71}.} Subtracting the mean direction --- one line --- takes the margin
+from $+0.0018$ to $\mathbf{+0.3875}$, a \textbf{215$\times$} improvement; with 128-d truncation it
+\textbf{separates cleanly} at $+0.5070$. The information was always there, drowned by one dominant
+direction. Whitening, the textbook fix, \emph{fails} ($+0.0020$) --- it removes the signal with the
+anisotropy.
+
+Most tellingly: even at the collapsed baseline, \textbf{4 of 5 related pairs still rank in the top 5
+by cosine}. Retrieval consumes \emph{ranking}, not absolute similarity, so the property the system
+depends on was largely intact while the property the probe measured was destroyed. \textbf{A smoke
+test can prove something unusable only if it tests the thing you use} --- the same lesson as the
+BM25 \texttt{score\_subset} check, where verifying rank agreement rather than absolute scores was
+the right call. MiniLM still wins on both axes (+0.6270 baseline, 5/5 on ranking), so the shipped
+choice is unchanged; what changes is the strength of the claim. \emph{Caveat: $n=5$ pairs is a smoke
+test, and no retrieval metric was run on centered vectors --- no recall improvement is claimed.}
 
 \subsection{Slate metrics barely discriminate --- always show the random row \F{F25}}
 

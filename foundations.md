@@ -215,6 +215,153 @@ speed/recall trade-off.
 
 ---
 
+## 3b · The seven factors that shaped *our* embeddings
+
+§3 is the concept; this is what actually got decided, with the number behind each. Read it as the
+worked example of §3 — every row is a place the pipeline could have silently failed.
+
+```mermaid
+flowchart TD
+    T["title + abstract<br>Q2.1, binding"] --> TOK["tokenize<br>max 128 tokens"]
+    TOK --> ENC["encoder forward pass<br>no training, no gradients"]
+    ENC --> POOL["mean-pool<br>attention-masked, never CLS"]
+    POOL --> NORM["L2-normalise<br>inner product becomes cosine"]
+    NORM --> TRUNC["truncate to 256-d<br>then re-normalise"]
+    TRUNC --> IDX["article index"]
+    H["user's last-N clicks"] --> DEC["recency decay<br>log, last 20"]
+    DEC --> COH["coherence ladder<br>mean or recent-half or max-pool"]
+    COH --> QV["query vector"]
+    IDX --> SCORE["cosine · brute force or HNSW"]
+    QV --> SCORE
+    SCORE --> TOPK["top-K candidates"]
+    style ENC fill:#fce8e6,stroke:#d93025,color:#000
+    style NORM fill:#fef7e0,stroke:#f9ab00,color:#000
+    style TOPK fill:#e6f4ea,stroke:#34a853,color:#000
+```
+
+**Read it as:** two paths meet at the scoring step — articles encoded once offline, the user's query
+vector manufactured per impression. The red box is where the biggest decision lives; the amber box is
+a correctness condition, not a tuning knob.
+
+### 1 · What text goes in — `title + abstract`
+
+`Article.retrieval_text` is `f"{title} {abstract}"`. **Binding — Q2.1 mandates it.**
+
+Measured anyway (F28): abstracts are **75% of the index** and buy **+0.011 recall against a ±0.030
+CI** — inside the noise. Kept because the requirement is binding, reported as the null result it is.
+
+### 2 · Which encoder — the largest factor by two orders of magnitude
+
+The brief names BERT and XLM-RoBERTa, so `xlm-roberta-base` was the intended primary. The concern
+raised *before any code was written* was **anisotropy**: models trained for masked-language
+modelling are not trained to make cosine similarity meaningful, and their representations are known
+to collapse into a narrow cone. `danish_probe()` tested that rather than assuming it (F37):
+
+| Encoder | related pairs | unrelated pairs | **margin** | verdict |
+|---|---|---|---|---|
+| `xlm-roberta-base` (768-d) | 0.9972 | 0.9954 | **+0.0018** | **overlaps** |
+| MiniLM (384-d) | 0.6523 | 0.0253 | **+0.6271** | separates |
+
+XLM-R rates *"Brøndby beat FCK"* and *"a new apple cake recipe"* as **0.995 similar** — as similar as
+two reports of the same football match.
+
+> [!warning] The failure mode this probe exists to catch
+> A retriever built on collapsed vectors **returns arbitrary articles while producing perfectly
+> plausible metrics**. Nothing crashes, nothing errors, and the recall number looks like a number.
+> **Symptom to recognise:** every pair scoring ~0.99 regardless of content.
+
+MiniLM achieves a **348× larger margin from half the dimensions**, because it is trained so that
+cosine similarity means something. `xlmr-base` stays in `MODELS` as the brief-named ablation row —
+**reporting a measured failure is a stronger result than quietly not running it.**
+
+### 3 · Pooling — mean-pool, never `[CLS]`
+
+`[CLS]` is the worst offender for MLM-trained models: it is trained for next-sentence prediction, not
+similarity. We mean-pool the final hidden states **masked by attention**, so padding tokens do not
+drag the mean toward nothing.
+
+### 4 · L2 normalisation — a correctness condition, not a knob
+
+Without it, inner-product search **silently becomes a popularity ranker**: longer articles get
+larger-magnitude vectors and win regardless of content. Normalising makes inner product ≡ cosine, so
+**no article can win on magnitude alone**.
+
+### 5 · Dimension — 256-d beats the full 384-d
+
+Truncate-then-renormalise, so the *only* variable is width. Re-encoding with a smaller model would
+confound width with training objective — which is exactly the mistake F37 exists to warn about.
+
+| dim | memory | recall@50 | nDCG@10 |
+|---|---|---|---|
+| 384 | 31.9 MB | 0.2325 | 0.4603 |
+| **256** | **21.2 MB** | **0.2500** | **0.4690** |
+| 128 | 10.6 MB | 0.2437 | 0.4651 |
+| 64 | 5.3 MB | 0.2175 | 0.4550 |
+
+**256-d wins on both axes — better quality at 34% less memory** (F47). Only the *paired* test could
+see it; the marginal CIs overlap, which is F46's point about overlap being the wrong test.
+
+> [!warning] Two caveats that must travel with this result
+> **MiniLM is not Matryoshka-trained**, so truncation has no guarantee of degrading gracefully — a
+> cliff was a real possibility, which is why it was measured. And on the MIND leaderboard the gain
+> was **+0.0004, one forty-fourth of the offline effect** (F58). Report it as *"no measurable change,
+> and cheaper"*, not as a confirmed improvement.
+
+### 6 · Query-vector construction — the largest *design* lever
+
+There is no query in a recommendation dataset, so one is manufactured from the user's clicked-article
+vectors. Three sub-factors, in `build_user_vector`:
+
+- **`last_n`** — how many recent clicks. EB-NeRD users average ~160; using all of them produces a
+  centroid pointing at the corpus mean.
+- **Recency decay** — log decay over the last 20, matching the lexical side so the two halves are
+  comparable.
+- **The coherence ladder**, which is the interesting part:
+
+1. Recency-weighted mean.
+2. Measure **coherence** = mean cosine of each clicked vector to that mean.
+3. **≥ τ (0.35)** → keep the mean. The user has one interest.
+4. **< τ** → the centroid is meaningless. Fall back to the **recent half**; if still incoherent,
+   **max-pool**.
+
+Max-pool is last because it is noisy — one outlier dimension dominates — but **a noisy vector that
+points *somewhere* beats a smooth one pointing at the corpus mean.**
+
+> [!important] The branch earns its complexity on one dataset only
+> **46% of MIND users** have histories too incoherent for a centroid, against **0.2% on EB-NeRD** —
+> consistent with the median history lengths (MIND 19, EB-NeRD 92): shorter histories are likelier to
+> be incoherent. `build_user_vector` returns the strategy it used so the harness can **slice on it**,
+> which is the only way to find out whether the branch was worth having.
+
+### 7 · Index — exact vs approximate
+
+`M = 64`, `efSearch` scaled by corpus size (128 → 512). F49 corrected an earlier error here: the
+first benchmark used **random** vectors, which are near-orthogonal in high dimensions and the *worst
+possible case* for a proximity graph. On real, clustered embeddings HNSW is **62–69× faster at 0.99+
+recall** — the opposite conclusion.
+
+### The honest ranking
+
+| Factor | Effect size |
+|---|---|
+| **Encoder choice** | **348×** margin difference — everything else is noise beside it |
+| Query construction (`last_n`, decay, coherence) | dataset-dependent: 46% vs 0.2% branch rate |
+| Dimension | +0.0175 recall offline, **+0.0004** on the leaderboard |
+| Pooling / normalisation | **binary** — get them wrong and the system fails silently |
+| Abstract inclusion | null (+0.011 against ±0.030) |
+
+> [!important] The two things to take from this table
+> **Pooling and normalisation are not tuning knobs** — they are correctness conditions whose failure
+> mode is *plausible-looking garbage*, the hardest kind of bug to notice.
+> **The encoder decision dwarfs every parameter swept afterwards**, and the probe that caught it was
+> about ten lines and ran before any pipeline existed. Cheap tests on the biggest decision, first.
+
+See `src/retrieval/encode.py` and `src/retrieval/semantic.py` for the implementations,
+[[decisions|decisions.md]] D-ENC for the alternatives rejected, and
+[[plan/execution_plan_log|F37, F47, F49, F58]] for the measurements.
+
+---
+
 ## 4 · The recommendation vocabulary
 
 These are the domain words the brief uses without defining.

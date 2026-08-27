@@ -127,14 +127,32 @@ def build_retriever(kind: str, dataset: str):
     if kind == "bm25":
         return BM25Retriever(**params)
     if kind == "semantic":
-        return HistoryIdRetriever(model_key="minilm", last_n=20)
+        return HistoryIdRetriever(model_key="minilm", last_n=20, **SEMANTIC)
     if kind == "fusion":
         return RRFusion(
-            [BM25Retriever(**params), HistoryIdRetriever(model_key="minilm", last_n=20)],
+            [BM25Retriever(**params),
+             HistoryIdRetriever(model_key="minilm", last_n=20, **SEMANTIC)],
             name="rrf(bm25+semantic)",
         )
     raise ValueError(f"unknown retriever {kind!r}")
 
+
+#: Semantic query-vector params (F73/F75). The shipped defaults -- tau=0.35,
+#: log decay -- were never swept: an audit found neither appears in any results
+#: file as a *varied* quantity. Sweeping them found tau monotonically worse as
+#: it tightens (0.20 -> r@100 0.0146, 0.80 -> 0.0039) and flat decay beating
+#: log, i.e. recency weighting on the semantic side was *costing* recall.
+#:
+#: Recency decay was imported here by analogy with the lexical side (D3) and
+#: never tested here. On MIND, which has no publish times at all, down-weighting
+#: older clicks discards history that carries signal.
+#:
+#: > [!warning] The offline effect is +0.0026 [-0.0011, +0.0070] -- NOT
+#: > significant at n=2,000 (F75). This ships only because the offline harness
+#: > has disagreed with the leaderboard three times out of three (F34/F42/F58),
+#: > so "not significant offline" is not evidence of no effect. The leaderboard
+#: > is the measurement; this is the experiment.
+SEMANTIC = dict(tau=0.20, decay="flat")
 
 #: Params chosen on val in the Phase 2 sweep (F23), before test was touched.
 BEST = {
@@ -695,6 +713,12 @@ def main(argv: list[str] | None = None) -> int:
         "window_hours": args.window_hours,
         "max_k": args.max_k,
     }
+    # The semantic query-vector params are part of the run identity too.
+    # Without them a tau/decay change produces the SAME stem as the run it
+    # differs from -- silently overwriting a submitted artefact and making two
+    # different configurations indistinguishable on the leaderboard.
+    if args.retriever in ("semantic", "fusion"):
+        run_params.update(SEMANTIC)
     retriever = build_retriever(args.retriever, args.dataset)
     t0 = time.perf_counter()
     retriever.index(list(articles.values()))

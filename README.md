@@ -75,7 +75,7 @@ src/
   eval/         metrics (two regimes), bootstrap, slices, harness, sweeps
   submit/       Codabench prediction files
 tests/          100 tests, incl. leakage mutation tests
-plan/           phase plans + execution log (findings F1-F75)
+plan/           phase plans + execution log (findings F1-F77)
 results/        every measured run, as JSON with CIs and resolved budget
 report/         a1_design_note.tex (the Q6 deliverable) + figs/ screenshots
 notebooks/      one-off data exploration; NOT part of the pipeline
@@ -91,7 +91,7 @@ configs/        per-dataset paths and resource budget
 | [`foundations.md`](foundations.md) | Every concept from scratch — vectors, BM25, embeddings, and the evaluation metrics built up need → why → how |
 | [`architecture.md`](architecture.md) | What the system **is**, plus the measured dataset facts |
 | [`decisions.md`](decisions.md) | What we **chose and rejected**, open questions, and the cost of each choice — the design-note source |
-| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F75, dated. Also the architecture changelog |
+| [`plan/execution_plan_log.md`](plan/execution_plan_log.md) | Findings F1–F77, dated. Also the architecture changelog |
 | [`mistakes.md`](mistakes.md) | Every defect found, in plain terms — eighteen of nineteen did not crash |
 | [`ai-log.md`](ai-log.md) | Q7.4 deliverable: curated prompts, what worked, what failed |
 

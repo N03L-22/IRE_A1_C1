@@ -1,0 +1,36 @@
+{
+  "dataset": "mind",
+  "tier": "large",
+  "retriever": "rrf(bm25+semantic)",
+  "retriever_kind": "fusion",
+  "params": {
+    "k1": 1.6,
+    "b": 0.75,
+    "last_n": 5
+  },
+  "run_params": {
+    "k1": 1.6,
+    "b": 0.75,
+    "last_n": 5,
+    "retriever": "fusion",
+    "window_hours": 0.0,
+    "max_k": 500,
+    "tau": 0.2,
+    "decay": "flat"
+  },
+  "stem": "mind_fusion_22aaef_i1",
+  "generated_at": "2026-08-27T22:56:51",
+  "budget": {
+    "n_jobs": 8,
+    "mem_gb": 19.33,
+    "batch_size": 64,
+    "available_mem_gb": 21.48,
+    "total_cores": 32,
+    "load_average": 1.54,
+    "scaled_down": true
+  },
+  "lines": 2370727,
+  "cold_slates": 29108,
+  "seconds": 2302.9,
+  "bytes": 291329312
+}

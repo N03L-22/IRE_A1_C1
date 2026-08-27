@@ -190,6 +190,31 @@ make eval          # the CI-bearing results in results/eval_*.json
 python -m src.submit.codabench --dataset mind --tier large     # Q5
 ```
 
+### Rebuilding a specific submitted artefact
+
+Every submission's config is in its `stem` and its `.meta.json`. **The `SEMANTIC` default changed
+after the 0.5938 run (F73/F75), so `--retriever fusion` now rebuilds the tuned file, not that one:**
+
+| stem | config | leaderboard |
+|---|---|---|
+| `mind_fusion_408acb_i1` | `tau=0.35, decay="log"` | **AUC 0.5938** |
+| `mind_fusion_22aaef_i1` | `tau=0.20, decay="flat"` | submitted 2026-08-27 |
+| `ebnerd_bm25_prediction` | bm25 only | queued, unscored |
+| `ebnerd_fusion_101c22_i1` | fusion, `tau=0.20, decay="flat"` | queued, unscored |
+
+To rebuild the scored MIND file, restore the pre-F73 values in
+`src/submit/codabench.py` and rerun:
+
+```python
+SEMANTIC = dict(tau=0.35, decay="log")
+```
+```bash
+python -m src.submit.codabench --dataset mind --tier large --retriever fusion
+```
+
+Verified byte-identical on 2026-08-26: `sha256 ba275ef0…`, 2,370,727 lines, 2,282.4 s against a
+2,287.9 s baseline (F69).
+
 Artefacts: `results/eval_*.json` (every row with CI, *n*, regime, slice basis),
 `results/bm25_sweep_*.json`, `data/store/*/manifest.json` (split spans, counts, resolved budget),
 `submissions/*.meta.json`.

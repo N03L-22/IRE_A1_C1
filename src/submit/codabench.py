@@ -161,6 +161,24 @@ def build_retriever(kind: str, dataset: str):
 #: > is the measurement; this is the experiment.
 SEMANTIC = dict(tau=0.20, decay="flat")
 
+#: > [!important] Rebuilding the submissions that were actually scored
+#: > This constant changed AFTER the 0.5938 MIND submission was made, so the
+#: > default no longer regenerates it. Both artefacts remain reproducible --
+#: > the run identity is in the stem and the params are in each .meta.json:
+#: >
+#: > | stem | config | leaderboard |
+#: > |---|---|---|
+#: > | ``mind_fusion_408acb_i1`` | tau=0.35, decay="log" | **AUC 0.5938** |
+#: > | ``mind_fusion_22aaef_i1`` | tau=0.20, decay="flat" | submitted 2026-08-27 |
+#: >
+#: > To rebuild the scored file, restore the pre-F73 values::
+#: >
+#: >     SEMANTIC = dict(tau=0.35, decay="log")
+#: >     python -m src.submit.codabench --dataset mind --tier large --retriever fusion
+#: >
+#: > It reproduces byte-identically: sha256 ba275ef0..., 2,370,727 lines (F69).
+#: > Verified on 2026-08-26 in 2,282.4s against a 2,287.9s baseline.
+
 #: Params chosen on val in the Phase 2 sweep (F23), before test was touched.
 BEST = {
     "ebnerd": dict(k1=1.6, b=1.0, last_n=15),

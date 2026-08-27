@@ -236,6 +236,35 @@ Three design points, each earned by a failure rather than chosen up front:
 | Shared state built in the parent, inherited via `fork` | 19.3 GB → **0.38 GB** private per worker | F70 |
 | **Merge runs only after every worker exits** | The merge hits a 13.3M-element set at *random*; under memory pressure that does not slow down, it **stops** | F38 |
 
+### Parallel designs considered
+
+Four ways to run 13.3M scorings across 32 cores. The shipped one is last; the others are recorded
+because *why they lose* is the actual design content.
+
+| Design | How it shares | Why not |
+|---|---|---|
+| **Threads** (`ThreadPoolExecutor`) | one address space — nothing to duplicate | The GIL serialises the Python-level scoring loop. Free memory-wise, useless CPU-wise: the work is interpreter-bound, not I/O-bound |
+| **Processes, each builds its own** *(the original)* | nothing shared | N full copies. **Measured 19.3 GB per worker** → 2 workers requested 48 GB on a 31 GB box and thrashed at ~140,000 blk/s |
+| **Shared memory** (`multiprocessing.shared_memory`, `/dev/shm`) | explicit shared buffers | Works, and is the portable answer — but every structure needs manual packing/unpacking, including the BM25 index. Real code for a result `fork` gives for free on Linux |
+| **`fork` + copy-on-write** ✅ | parent builds once; children inherit | **Shipped.** 0.38 GB private per worker; 6 workers in 10 GB |
+
+**Read it as:** the first two are the textbook options and both fail here — one on the GIL, one on
+memory. The third is what you would write on a platform without `fork`; the fourth is the same idea
+delegated to the kernel.
+
+> [!important] The choice is only available because of the data representation
+> Copy-on-write shares a page until someone **writes** to it. CPython refcounting writes to an
+> object's header whenever a child touches it — so forked workers reading 807,677 `History` objects
+> would gradually copy most of them, and this design would quietly decay into the second row of the
+> table. Contiguous `int32` arrays have no per-element bookkeeping, so the 116.8M clicks stay in
+> **one physical copy** however many workers read them.
+>
+> **The columnar work (F64/F67) was therefore the enabler, not merely a saving** — and that was not
+> the reason it was built. Recorded as luck, not foresight.
+
+**Fallback:** where `fork` is unavailable (Windows, spawn start-method), the code falls back to
+per-worker construction — correct everywhere, fast on Linux.
+
 > [!warning] `ps` overstates a forked worker by ~8×
 > A worker shows 3.23 GB of RSS but only **0.38 GB is private** — RSS counts every shared page once
 > per process. Sizing a run from RSS is what produced a request for 48 GB on a 31 GB machine. Use

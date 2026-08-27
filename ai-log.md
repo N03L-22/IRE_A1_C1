@@ -176,7 +176,7 @@ deadline.
 
 ## What failed
 
-Twelve defects, all in `mistakes.md` with full detail. **Eleven of twelve did not crash** — every one
+Fifteen defects, all in `mistakes.md` with full detail. **Fourteen of fifteen did not crash** — every one
 was caught by a number disagreeing with a prediction, none by reading code.
 
 - **A retriever that silently returned nothing.** `SemanticRetriever._query_vector` looked history
@@ -875,3 +875,6 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-26 05:30 · `0df5ffb1`
 
 > test complete main and verify the resulting score locally matches? check ebnerd and mind. eta for both?
+### 2026-08-26 14:02 · `0df5ffb1`
+
+> check the open shells once. check the correctness of the entire work once. update the plan docs with the decisions taken. and rthe arch doc with parallel designs considered. make sure the docs reflect the code properly. use foundations for concept, arch for broad level, and plan for in-depth each phase. update the 4page report also. maybe try 2 column design for the design note? also no changes in submissions and dont have to resubmit ri8?

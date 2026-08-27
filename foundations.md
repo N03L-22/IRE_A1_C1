@@ -514,6 +514,48 @@ and the n travel with it, always, because without them the number cannot be comp
 
 ---
 
+## 5b · Why the data's *shape* decides what the system can do
+
+Not on the syllabus, and it turned out to govern the whole submission path. The concept is worth
+having because it generalises far past this assignment.
+
+**Two ways to hold 116.8 million numbers.**
+
+Python's normal way gives each number its own little labelled box — flexible, and about **57 bytes of
+packaging for a value worth 4**. A *columnar array* stores them as one solid block: 4 bytes each, no
+packaging, laid out end to end.
+
+| 116.8M click ids | as Python objects | as one `int32` array |
+|---|---|---|
+| Memory | ~13 GB | **0.93 GB** |
+| Time to load | 160 s | **4.6 s** |
+
+**Why the array is faster to *load*, not just smaller.** Building 116.8M Python objects means 116.8M
+separate allocations. The array is one allocation and a copy — the file already stores the numbers
+this way, so nothing has to be unpacked at all.
+
+> [!important] The non-obvious part: shape decides whether *sharing* is possible
+> When a program splits into several worker processes, each normally gets its own copy of everything.
+> Six workers, six copies.
+>
+> Linux offers a way out: **copy-on-write.** After a `fork`, parent and children share the same
+> physical memory until someone **writes** to it. Read-only data is therefore free to share.
+>
+> Here is the catch, and it is pure consequence of representation. Python tracks how many references
+> point at each object, and it stores that count *inside the object*. So merely **reading** a Python
+> object writes to it — updating the count — which dirties the page and forces a private copy. A
+> forked worker "just reading" 807,677 objects would gradually copy nearly all of them.
+>
+> An array has no per-element bookkeeping. Reading it touches nothing. So the 116.8M clicks stay in
+> **exactly one physical copy** no matter how many workers read them: **19.3 GB per worker → 0.38 GB**.
+
+**Read it as:** the memory saving was the visible win, but the real one was that a solid block of
+numbers can be *shared* while a pile of objects cannot. Choosing a representation quietly chooses
+which parallel designs are available to you later.
+
+See [[architecture#Parallel designs considered|architecture]] for the four designs this ruled
+between, and [[plan/execution_plan_log|F64–F70]] for the measurements.
+
 ## 6 · The three things that silently ruin this assignment
 
 Not style issues. Each produces *plausible-looking numbers that are wrong*, which is far worse than

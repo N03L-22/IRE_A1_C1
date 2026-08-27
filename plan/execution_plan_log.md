@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F66.**
+> **One day to the 2026-08-27 deadline. Findings F1–F70.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -710,7 +710,7 @@ Worse when scaled to a real run. MIND fusion took **2,288 s**; semantic slate sc
 > out of 800**. There was almost no signal to detect. *The null results here were short of effect
 > size, not CPU time* — and no amount of speed fixes that.
 
-**Merge gate (passed, not merged).** Paired on 1,000 real slates: max score difference 1.788e-07,
+**Merge gate (passed).** Paired on 1,000 real slates: max score difference 1.788e-07,
 and **1 rank inversion in 1,493,005 pairs**. That one is a genuine tie — the two scores differ by
 **4.7e-09**, below fp32 resolution — so its order is arbitrary in both implementations, not wrong in
 one. `tests/test_batched.py` gates on inversions separated by more than 1e-6, the property a

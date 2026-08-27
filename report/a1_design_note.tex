@@ -277,9 +277,37 @@ impressions and its history parquet exceeds its behaviours file. The data layer 
 \item \textbf{The prediction path needed a different algorithm, not a bigger machine \F{F32}.}
 Full-corpus retrieval per impression ran at 162 impressions/s ($\sim$4\,h/file) because it discarded
 99\% of each result. Scoring the slate directly: \textbf{2,570/s, 16$\times$}.
-\item \textbf{Parallelism was memory-bound, and the fix was representation \F{F36}.} A worker peaked
-at 15.1\,GB, of which the index was only 1.8\,GB --- the rest was 116.8M click ids as Python
-\texttt{str}. Storing them as \texttt{array('i')} indices: \textbf{9.25\,GB, and 45\% faster}.
+\item \textbf{Parallelism was memory-bound, and the fix was representation --- twice
+\F{F36,F64--F70}.} A worker peaked at 15.1\,GB, of which the index was only 1.8\,GB; the rest was
+116.8M click ids as Python \texttt{str}. Storing them as \texttt{array('i')} indices gave
+\textbf{9.25\,GB and 45\% faster}. Pushing the same idea further --- holding histories as contiguous
+\texttt{int32} arrays read straight from parquet row groups, never as Python objects --- cut the load
+from \textbf{160.8\,s to 4.6\,s} and $\sim$13\,GB to \textbf{0.93\,GB} \F{F64}.
+
+That representation then enabled something the object version could not do. Every worker had been
+rebuilding the \emph{same} immutable index, articles and histories, so $N$ workers meant $N$ copies
+(19.3\,GB each, measured). Building them once in the parent and letting \texttt{fork}'s
+copy-on-write share them takes the true marginal cost of a worker --- \texttt{Private\_Dirty}, not
+\texttt{RSS} --- to \textbf{0.38\,GB, a 48$\times$ reduction} \F{F70}. This is only possible with
+arrays: CPython refcounting \emph{writes} to an object header whenever a child touches it, dirtying
+the page and forcing a private copy, whereas an array's data buffer is never touched by refcounting.
+
+\begin{center}\footnotesize
+\begin{tabular}{@{}lrrr@{}}
+\toprule
+Configuration & workers & RAM & time \\
+\midrule
+2 workers \emph{(produced the submission)} & 2 & 48\,GB req.\ on 31\,GB & $\sim$49 min \\
+Columnar histories \F{F64,F67} & 3 & 13\,GB & 33 min \\
+\textbf{+ fork-shared state \F{F70}} & \textbf{6} & \textbf{10\,GB} & \textbf{22 min} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\textbf{Every one of these produced a byte-identical submission} (SHA-256 \texttt{066de46d\ldots},
+13,336,711 lines) --- the gate the work was held to, since a performance change that alters the
+output is a defect, not an optimisation. The 2-worker row is the configuration that thrashed:
+$\sim$140{,}000 blocks/s of swap I/O with all 32 cores 75--100\% \emph{idle}.
 \item \textbf{Swap does not slow the merge, it stops it \F{F38}.} All 51 shards wrote at 6,426
 lines/s, then the merge produced \emph{zero} output for 20+ minutes with 24\,GB swapped. The same
 merge with RAM free: \textbf{7 seconds}. Scoring streams and degrades gracefully; the merge hits a
@@ -334,8 +362,19 @@ reported MIND AUC 0.4981 [0.4776, 0.5190] while the leaderboard scored \textbf{0
 \emph{outside} the interval \F{F34}. Now $n{=}4{,}000$+, but several reported differences still have
 overlapping CIs and are labelled as such. (ii)~Abstracts are 75\% of the lexical index and buy
 \textbf{+0.011 recall against a $\pm$0.030 CI} --- kept because Q2.1 mandates it, reported as the
-null result it is \F{F28}. (iii)~HNSW figures come from \emph{random} vectors (near-orthogonal,
-worst case) and are a pessimistic bound. (iv)~MIND's test window is a single day, so one day's
-topical anomaly moves every MIND number.
+null result it is \F{F28}. (iii)~MIND's test window is a single day, so one day's topical anomaly
+moves every MIND number. (iv)~Reproduction is verified for both datasets by regenerating each
+submission and comparing SHA-256: MIND \texttt{ba275ef0\ldots} in 2{,}282\,s against a 2{,}288\,s
+baseline, EB-NeRD \texttt{066de46d\ldots}. \emph{Caveat:} EB-NeRD's check ran on the optimised path
+(byte-identical, so the pipeline is deterministic), not on the exact 2-worker configuration that
+produced the upload --- that configuration no longer fits this machine.
+
+\textbf{The methodological finding, which outranks the results.} Offline and leaderboard disagreed
+\textbf{three times out of three, in both directions}: $n{=}800$ \emph{understated} MIND
+(0.4981 vs 0.5568) \F{F34}; fusion was \emph{not significant} offline yet gained \textbf{+0.0366}
+on 2.37M impressions \F{F42}; 256-d was significant offline at $+0.0175$ and moved the leaderboard
+\textbf{+0.0004} \F{F58}. The harness remains sound for what it was built for --- leakage, slicing,
+the recency effect --- but \textbf{no retriever or parameter choice here is settled until it has
+been submitted}, and this note labels each such claim rather than rounding it into a result.
 
 \end{document}

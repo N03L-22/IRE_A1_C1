@@ -914,3 +914,11 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-27 22:01 · `0df5ffb1`
 
 > my daily quota is refreshed. and time extended till 29th
+
+### 2026-08-27 22:21 · `0df5ffb1`
+
+> queue it, but also why MIND with lower test data is taking more time? have we not ported MIND for polar? or similar EB-Nerd?
+
+### 2026-08-27 22:23 · `0df5ffb1`
+
+> port MIND to polar based, now, while this is running and then check the timing, and then run the ebnerd as well.

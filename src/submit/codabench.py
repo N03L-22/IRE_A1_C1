@@ -76,6 +76,13 @@ WORKER_GB_COLUMNAR = 5.6
 #: deliberately generous; the failure mode for underestimating is a thrash.
 WORKER_INCREMENT_GB = 1.5
 
+#: A MIND worker: the BM25 index plus 702,005 histories whose median length is
+#: 19 clicks (against EB-NeRD's 92) and which carry no timestamps (F1). To be
+#: replaced with a measured value once a parallel MIND run has been profiled --
+#: deliberately generous until then, because underestimating means a thrash
+#: rather than a clean error (F38, bug 15).
+WORKER_GB_MIND = 4.0
+
 #: Left free for the single-threaded merge, which builds a set over 13.3M
 #: impression ids after the workers exit.
 MERGE_HEADROOM_GB = 3.0
@@ -501,7 +508,12 @@ def build_predictions_parallel(
     # EB-NeRD workers use ColumnarTexts (F67), so they are ~2.9 GB rather than
     # ~9.5 GB and many more fit. Measured, not assumed: F64 put the click
     # arrays at 0.93 GB against ~7.4 GB of Python objects.
-    worker_gb = WORKER_GB_COLUMNAR if dataset == "ebnerd" else WORKER_GB
+    # EB-NeRD workers carry 807,677 users / 116.8M clicks; MIND carries 702,005
+    # users with far shorter histories (median 19 vs 92) and no timestamps, so a
+    # MIND worker is a fraction of the size. Measured per dataset rather than
+    # assumed -- sizing MIND with EB-NeRD's constant would clamp it to 2 workers
+    # on a machine that fits many more (F76).
+    worker_gb = {"ebnerd": WORKER_GB_COLUMNAR, "mind": WORKER_GB_MIND}.get(dataset, WORKER_GB)
     # Under fork-sharing (F70) the big structures exist once and the workers
     # inherit them read-only, so an extra worker costs its own scratch space
     # rather than another full copy. Budget the shared set once, then a small
@@ -737,7 +749,10 @@ def main(argv: list[str] | None = None) -> int:
     txt = args.out_dir / f"{stem}_prediction.txt"
     if will_parallelise:
         # Parquet-backed readers expose row groups, the natural unit of
-        # parallelism. MIND is TSV and has none, so it takes the serial path.
+        # parallelism. MIND ships TSV, which has none -- but F76 converts it to
+        # parquet beside the TSV, and the reader exposes impressions_row_group
+        # only when that file exists. So MIND takes this path after conversion
+        # and the serial one before it, with no flag to set.
         stats = build_predictions_parallel(
             args.dataset, args.tier, args.work_dir, test_split, txt, budget.n_jobs,
             allow_swap=args.allow_swap, retriever_kind=args.retriever,

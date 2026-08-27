@@ -125,6 +125,56 @@ class MindReader:
                     session_id=None,  # MIND has no sessions
                 )
 
+    # -- the fast path (F76) ------------------------------------------
+    #
+    # Present only when behaviors.parquet has been built beside the TSV. The
+    # submission path branches on hasattr(reader, "impressions_row_group"), so
+    # MIND takes the parallel path exactly when the converted file exists and
+    # falls back to the serial TSV reader when it does not -- no flag, no
+    # config, and an un-converted checkout still works.
+
+    def _behaviours_parquet(self, split: str) -> Path | None:
+        p = self._split_dir(split) / "behaviors.parquet"
+        return p if p.exists() else None
+
+    def __getattr__(self, name: str):
+        # impressions_row_group is only a real method when the parquet exists.
+        # Declaring it unconditionally would make hasattr() true for every
+        # MIND reader and send un-converted splits down a path that cannot
+        # serve them.
+        if name == "impressions_row_group":
+            for split in ("test", "large_test", "dev", "train"):
+                try:
+                    if self._behaviours_parquet(split) is not None:
+                        return self._impressions_row_group
+                except FileNotFoundError:
+                    continue
+        raise AttributeError(name)
+
+    def _impressions_row_group(self, split: str, rg_index: int) -> Iterator[Impression]:
+        """Impressions from ONE parquet row group -- the unit of parallelism."""
+        path = self._behaviours_parquet(split)
+        if path is None:
+            raise FileNotFoundError(
+                f"mind: no behaviors.parquet for {split!r}; run "
+                "`python -m src.data.mind_parquet` to build it"
+            )
+        tbl = pq.ParquetFile(path).read_row_group(rg_index)
+        d = tbl.to_pydict()
+        for i in range(tbl.num_rows):
+            yield Impression(
+                impression_id=str(d["impression_id"][i]),
+                user_id=str(d["user_id"][i]),
+                time=d["time"][i],
+                candidates=list(d["candidates"][i] or []),
+                clicked=list(d["clicked"][i] or []),
+                session_id=None,
+            )
+
+    def n_row_groups(self, split: str) -> int:
+        path = self._behaviours_parquet(split)
+        return pq.ParquetFile(path).metadata.num_row_groups if path else 0
+
     @staticmethod
     def _parse_slate(raw: str) -> tuple[list[str], list[str]]:
         """Parse "N55689-1 N35729-0" into candidates and clicks.

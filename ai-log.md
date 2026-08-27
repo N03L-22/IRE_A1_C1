@@ -910,3 +910,37 @@ Every prompt as recorded, unedited, in chronological order. Entries marked
 ### 2026-08-27 21:35 · `0df5ffb1`
 
 > test them
+
+### 2026-08-27 22:01 · `0df5ffb1`
+
+> my daily quota is refreshed. and time extended till 29th
+
+### 2026-08-27 22:21 · `0df5ffb1`
+
+> queue it, but also why MIND with lower test data is taking more time? have we not ported MIND for polar? or similar EB-Nerd?
+
+### 2026-08-27 22:23 · `0df5ffb1`
+
+> port MIND to polar based, now, while this is running and then check the timing, and then run the ebnerd as well.
+
+### 2026-08-27 22:38 · `0df5ffb1`
+
+> make sure the ebnerd is queued accordingly>?
+
+### 2026-08-27 22:57 · `0df5ffb1`
+
+> <task-notification>
+> <task-id>bqmm3yqyr</task-id>
+> <tool-use-id>toolu_01UrVCUkoMpxnNKmRY9BoMmD</tool-use-id>
+> <output-file>/tmp/claude-1000/-home-noel-Desktop-Obsidian-MTech-CSE-SEM3-Subjects-IRE/0df5ffb1-9294-44d7-bcc4-ccd6ac580846/tasks/bqmm3yqyr.output</output-file>
+> <status>completed</status>
+> <summary>Background command "Wait for MIND tuned submission" completed (exit code 0)</summary>
+> </task-notification>
+
+### 2026-08-27 23:17 · `0df5ffb1`
+
+> the submission failed. any reason or change in formatting?
+
+### 2026-08-27 23:17 · `0df5ffb1`
+
+> its okay, showing up now

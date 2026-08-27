@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F75.**
+> **One day to the 2026-08-27 deadline. Findings F1–F77.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -1387,6 +1387,41 @@ n=2,000 on both datasets, applied together and separately** (`src/eval/combined.
 significant result at one sample size is a hypothesis, not a finding, until it is re-measured at
 another.** F73/F74 are left standing above with their original numbers so the correction is visible
 rather than silently edited away.
+
+### F77 — The MIND port measured: 3.85× and byte-identical, and the format was a red herring
+F76 converted MIND's behaviours to parquet so it could take the parallel path, and *projected* a
+gain without measuring it. Measured on an idle machine (load 2.0), 8 workers over 12 row groups:
+
+| | time | throughput |
+|---|---|---|
+| Serial (TSV, 1 worker) | **2,302.9 s = 38.4 min** | 1,029 lines/s |
+| **Parallel (parquet, 8 workers)** | **597.9 s = 10.0 min** | **3,965 lines/s** |
+| | **3.85×** | |
+
+**Byte-identical output** — `eec2ca11…` on both, 2,370,727 lines. The parallel path is a speed
+change only, which is the gate this work was held to (F69).
+
+The MIND/EB-NeRD throughput gap closes from **9.9× to 2.6×**.
+
+> [!important] The format change was worth nothing; the parallelism was worth everything
+> F76 measured parquet reading at **18,441/s against the TSV's 55,413/s — 3× slower** per group,
+> because `read_row_group` materialises all 200K rows before yielding. Converting to parquet
+> *by itself* is a loss.
+>
+> It pays only because **row groups are the unit of parallelism**: a TSV cannot be split safely (a
+> slate field may contain anything, so a byte-offset split can land mid-record), while row groups are
+> independent by construction. The conversion buys the *ability to parallelise*, not faster reading —
+> and reading is only ~2–5% of a run that spends ~0.96 ms per impression scoring.
+
+**Why 3.85× and not 8×**, stated rather than left as a gap: 12 groups across 8 workers is uneven —
+8 run, then 4 — so the tail executes at half occupancy. Plus the serial setup (articles, index build)
+and the single-threaded merge, neither of which parallelises. **A group count that is a multiple of
+the worker count would do better**; 200K rows/group was chosen before the worker count was known.
+
+*Method note:* the first benchmark attempt reported **286×**, which was the script failing in 8
+seconds because it never created its output directory (`2288/8`). An absurd number is easy to catch;
+a plausible wrong one is not — which is the same lesson as bug 9, and the reason the byte-identical
+check runs alongside the timing rather than instead of it.
 
 ## Findings
 

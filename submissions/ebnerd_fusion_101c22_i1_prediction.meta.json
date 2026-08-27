@@ -1,0 +1,40 @@
+{
+  "dataset": "ebnerd",
+  "tier": "testset",
+  "retriever": "rrf(bm25+semantic)",
+  "retriever_kind": "fusion",
+  "params": {
+    "k1": 1.6,
+    "b": 1.0,
+    "last_n": 15
+  },
+  "run_params": {
+    "k1": 1.6,
+    "b": 1.0,
+    "last_n": 15,
+    "retriever": "fusion",
+    "window_hours": 0.0,
+    "max_k": 500,
+    "tau": 0.2,
+    "decay": "flat"
+  },
+  "stem": "ebnerd_fusion_101c22_i1",
+  "generated_at": "2026-08-27T23:47:40",
+  "budget": {
+    "n_jobs": 6,
+    "mem_gb": 20.32,
+    "batch_size": 64,
+    "available_mem_gb": 22.58,
+    "total_cores": 32,
+    "load_average": 11.16,
+    "scaled_down": true
+  },
+  "lines": 13336711,
+  "rows_read": 13536710,
+  "duplicates_dropped": 199999,
+  "cold_slates": 0,
+  "seconds": 2927.6,
+  "bytes": 523863118,
+  "row_groups": 51,
+  "workers": 6
+}

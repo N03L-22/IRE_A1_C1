@@ -76,6 +76,13 @@ WORKER_GB_COLUMNAR = 5.6
 #: deliberately generous; the failure mode for underestimating is a thrash.
 WORKER_INCREMENT_GB = 1.5
 
+#: A MIND worker: the BM25 index plus 702,005 histories whose median length is
+#: 19 clicks (against EB-NeRD's 92) and which carry no timestamps (F1). To be
+#: replaced with a measured value once a parallel MIND run has been profiled --
+#: deliberately generous until then, because underestimating means a thrash
+#: rather than a clean error (F38, bug 15).
+WORKER_GB_MIND = 4.0
+
 #: Left free for the single-threaded merge, which builds a set over 13.3M
 #: impression ids after the workers exit.
 MERGE_HEADROOM_GB = 3.0
@@ -127,14 +134,50 @@ def build_retriever(kind: str, dataset: str):
     if kind == "bm25":
         return BM25Retriever(**params)
     if kind == "semantic":
-        return HistoryIdRetriever(model_key="minilm", last_n=20)
+        return HistoryIdRetriever(model_key="minilm", last_n=20, **SEMANTIC)
     if kind == "fusion":
         return RRFusion(
-            [BM25Retriever(**params), HistoryIdRetriever(model_key="minilm", last_n=20)],
+            [BM25Retriever(**params),
+             HistoryIdRetriever(model_key="minilm", last_n=20, **SEMANTIC)],
             name="rrf(bm25+semantic)",
         )
     raise ValueError(f"unknown retriever {kind!r}")
 
+
+#: Semantic query-vector params (F73/F75). The shipped defaults -- tau=0.35,
+#: log decay -- were never swept: an audit found neither appears in any results
+#: file as a *varied* quantity. Sweeping them found tau monotonically worse as
+#: it tightens (0.20 -> r@100 0.0146, 0.80 -> 0.0039) and flat decay beating
+#: log, i.e. recency weighting on the semantic side was *costing* recall.
+#:
+#: Recency decay was imported here by analogy with the lexical side (D3) and
+#: never tested here. On MIND, which has no publish times at all, down-weighting
+#: older clicks discards history that carries signal.
+#:
+#: > [!warning] The offline effect is +0.0026 [-0.0011, +0.0070] -- NOT
+#: > significant at n=2,000 (F75). This ships only because the offline harness
+#: > has disagreed with the leaderboard three times out of three (F34/F42/F58),
+#: > so "not significant offline" is not evidence of no effect. The leaderboard
+#: > is the measurement; this is the experiment.
+SEMANTIC = dict(tau=0.20, decay="flat")
+
+#: > [!important] Rebuilding the submissions that were actually scored
+#: > This constant changed AFTER the 0.5938 MIND submission was made, so the
+#: > default no longer regenerates it. Both artefacts remain reproducible --
+#: > the run identity is in the stem and the params are in each .meta.json:
+#: >
+#: > | stem | config | leaderboard |
+#: > |---|---|---|
+#: > | ``mind_fusion_408acb_i1`` | tau=0.35, decay="log" | **AUC 0.5938** |
+#: > | ``mind_fusion_22aaef_i1`` | tau=0.20, decay="flat" | submitted 2026-08-27 |
+#: >
+#: > To rebuild the scored file, restore the pre-F73 values::
+#: >
+#: >     SEMANTIC = dict(tau=0.35, decay="log")
+#: >     python -m src.submit.codabench --dataset mind --tier large --retriever fusion
+#: >
+#: > It reproduces byte-identically: sha256 ba275ef0..., 2,370,727 lines (F69).
+#: > Verified on 2026-08-26 in 2,282.4s against a 2,287.9s baseline.
 
 #: Params chosen on val in the Phase 2 sweep (F23), before test was touched.
 BEST = {
@@ -483,7 +526,12 @@ def build_predictions_parallel(
     # EB-NeRD workers use ColumnarTexts (F67), so they are ~2.9 GB rather than
     # ~9.5 GB and many more fit. Measured, not assumed: F64 put the click
     # arrays at 0.93 GB against ~7.4 GB of Python objects.
-    worker_gb = WORKER_GB_COLUMNAR if dataset == "ebnerd" else WORKER_GB
+    # EB-NeRD workers carry 807,677 users / 116.8M clicks; MIND carries 702,005
+    # users with far shorter histories (median 19 vs 92) and no timestamps, so a
+    # MIND worker is a fraction of the size. Measured per dataset rather than
+    # assumed -- sizing MIND with EB-NeRD's constant would clamp it to 2 workers
+    # on a machine that fits many more (F76).
+    worker_gb = {"ebnerd": WORKER_GB_COLUMNAR, "mind": WORKER_GB_MIND}.get(dataset, WORKER_GB)
     # Under fork-sharing (F70) the big structures exist once and the workers
     # inherit them read-only, so an extra worker costs its own scratch space
     # rather than another full copy. Budget the shared set once, then a small
@@ -695,6 +743,12 @@ def main(argv: list[str] | None = None) -> int:
         "window_hours": args.window_hours,
         "max_k": args.max_k,
     }
+    # The semantic query-vector params are part of the run identity too.
+    # Without them a tau/decay change produces the SAME stem as the run it
+    # differs from -- silently overwriting a submitted artefact and making two
+    # different configurations indistinguishable on the leaderboard.
+    if args.retriever in ("semantic", "fusion"):
+        run_params.update(SEMANTIC)
     retriever = build_retriever(args.retriever, args.dataset)
     t0 = time.perf_counter()
     retriever.index(list(articles.values()))
@@ -713,7 +767,10 @@ def main(argv: list[str] | None = None) -> int:
     txt = args.out_dir / f"{stem}_prediction.txt"
     if will_parallelise:
         # Parquet-backed readers expose row groups, the natural unit of
-        # parallelism. MIND is TSV and has none, so it takes the serial path.
+        # parallelism. MIND ships TSV, which has none -- but F76 converts it to
+        # parquet beside the TSV, and the reader exposes impressions_row_group
+        # only when that file exists. So MIND takes this path after conversion
+        # and the serial one before it, with no flag to set.
         stats = build_predictions_parallel(
             args.dataset, args.tier, args.work_dir, test_split, txt, budget.n_jobs,
             allow_swap=args.allow_swap, retriever_kind=args.retriever,

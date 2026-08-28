@@ -26,7 +26,7 @@ correct before starting the next. Doc and data-layout work come before coding.
 > | Leaderboard screenshots (Q7.3) | ⬜ MIND available, EB-NeRD pending |
 > | Pair declaration (C2) | ⚠️ **deadline was 2026-08-15 — verify this is sorted** |
 >
-> **One day to the 2026-08-27 deadline. Findings F1–F77.**
+> **One day to the 2026-08-27 deadline. Findings F1–F78.**
 >
 > **The three findings that reshaped the work:**
 > 1. **F16/F21 — recency dominates.** A retriever that ignores the user entirely scores
@@ -1422,6 +1422,52 @@ the worker count would do better**; 200K rows/group was chosen before the worker
 seconds because it never created its output directory (`2288/8`). An absurd number is easy to catch;
 a plausible wrong one is not — which is the same lesson as bug 9, and the reason the byte-identical
 check runs alongside the timing rather than instead of it.
+
+### F78 — The never-swept parameters were worth +0.0109 on the leaderboard, and offline said "not significant"
+Submission **905903**, MIND fusion at 256-d with `tau=0.20, decay="flat"` (F73's values):
+
+| Submission | Config | AUC | Δ |
+|---|---|---|---|
+| 901650 | bm25 | 0.5568 | — |
+| 901779 | fusion, 384-d | 0.5934 | +0.0366 |
+| 901876 | fusion, 256-d | 0.5938 | +0.0004 |
+| **905903** | **fusion, 256-d, τ=0.20 + flat decay** | **0.6047** | **+0.0109** |
+
+**+0.0479 total from the first submission, and the first score above 0.60.**
+
+> [!important] This is the fourth and most damning offline/leaderboard disagreement
+> F75 measured this change at **+0.0026 [−0.0011, +0.0070]** at n=2,000 and concluded *"the
+> significance does not survive"* — the CI spans zero. The leaderboard delivered **+0.0109**:
+> **4.2× the point estimate, and outside the offline interval entirely.**
+>
+> The tally is now **four for four**, in both directions:
+>
+> | | offline said | leaderboard gave |
+> |---|---|---|
+> | F34 | AUC 0.4981 [0.4776, 0.5190] | **0.5568** — outside the CI |
+> | F42 | fusion **not significant** | **+0.0366** |
+> | F58 | 256-d significant at +0.0175 | **+0.0004** — 1/44th |
+> | **F78** | τ/decay **not significant**, +0.0026 | **+0.0109** — 4.2×, outside the CI |
+>
+> It has now understated twice, overstated once, and missed one entirely. **At n≈2,000–4,000 the
+> offline harness cannot rank MIND configurations in either direction.**
+
+**The decision this vindicates, and the reasoning that nearly lost it.** F75 concluded *"a measured
+design defect worth recording, not a tuning win worth shipping"* — and on the offline evidence that
+was correct. What overrode it was the meta-observation that **"not significant offline" is not
+evidence of no effect when the instrument has never once been right**. Submitting on a null offline
+signal was the right call precisely *because* the offline signal is uninformative here.
+
+*The corroborating detail:* the tuned file differs from 901876 on **2,033,631 of 2,370,727 rows
+(85.8%)**. A change touching 86% of slates was never going to be a +0.0026 effect; the offline
+sample simply could not see it. **When a configuration change reorders most of the output, treat a
+null offline result as "unmeasured", not "no effect".**
+
+*Recorded honestly:* F73 called these significant, F75 correctly showed that claim did not survive
+re-testing, and F78 shows the effect was real but ~4× larger than F73 estimated. **All three were wrong
+about the magnitude in different directions.** What was right throughout was the *direction* — every
+configuration beat the shipped one on both metrics across both datasets (F75's 4/4 consistency),
+which turned out to carry more information than any individual interval.
 
 ## Findings
 
